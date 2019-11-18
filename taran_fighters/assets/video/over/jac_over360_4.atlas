@@ -1,0 +1,165 @@
+jac_over360_2.png
+format: RGBA8888
+filter: Nearest,Nearest
+repeat: none
+jak_over_360_img001
+  rotate: false
+  xy: 363, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img002
+  rotate: false
+  xy: 1449, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img003
+  rotate: false
+  xy: 1, 727
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img004
+  rotate: false
+  xy: 725, 727
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img005
+  rotate: false
+  xy: 1, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img006
+  rotate: false
+  xy: 725, 485
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img007
+  rotate: false
+  xy: 363, 243
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img008
+  rotate: false
+  xy: 725, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img009
+  rotate: false
+  xy: 1087, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img010
+  rotate: false
+  xy: 1, 1
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img011
+  rotate: false
+  xy: 363, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img012
+  rotate: false
+  xy: 725, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img013
+  rotate: false
+  xy: 363, 485
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img014
+  rotate: false
+  xy: 1449, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img015
+  rotate: false
+  xy: 1087, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img016
+  rotate: false
+  xy: 363, 727
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img017
+  rotate: false
+  xy: 1087, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img018
+  rotate: false
+  xy: 363, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img019
+  rotate: false
+  xy: 1, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img020
+  rotate: false
+  xy: 1, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img021
+  rotate: false
+  xy: 725, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img022
+  rotate: false
+  xy: 1, 243
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+jak_over_360_img023
+  rotate: false
+  xy: 1, 485
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1

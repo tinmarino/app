@@ -1,0 +1,47 @@
+
+escape.png
+format: RGBA8888
+filter: Nearest,Nearest
+repeat: none
+taran_icon1
+  rotate: false
+  xy: 1, 121
+  size: 816, 816
+  orig: 816, 816
+  offset: 0, 0
+  index: -1
+roz_bras_gauche
+  rotate: false
+  xy: 1, 59
+  size: 200, 60
+  orig: 200, 60
+  offset: 0, 0
+  index: -1
+jak_bras_droit
+  rotate: false
+  xy: 819, 880
+  size: 201, 57
+  orig: 201, 57
+  offset: 0, 0
+  index: -1
+iul_bras_gauche
+  rotate: false
+  xy: 1, 1
+  size: 200, 56
+  orig: 200, 56
+  offset: 0, 0
+  index: -1
+tin_bras_droit
+  rotate: false
+  xy: 203, 65
+  size: 200, 54
+  orig: 200, 54
+  offset: 0, 0
+  index: -1
+fix_bras_gauche
+  rotate: false
+  xy: 819, 832
+  size: 200, 46
+  orig: 200, 46
+  offset: 0, 0
+  index: -1

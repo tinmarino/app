@@ -1,0 +1,151 @@
+victory.png
+format: RGBA8888
+filter: Nearest,Nearest
+repeat: none
+vic1
+  rotate: false
+  xy: 363, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic2
+  rotate: false
+  xy: 725, 727
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic3
+  rotate: false
+  xy: 1, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic4
+  rotate: false
+  xy: 725, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic5
+  rotate: false
+  xy: 725, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic6
+  rotate: false
+  xy: 363, 485
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic7
+  rotate: false
+  xy: 1087, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic8
+  rotate: false
+  xy: 725, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic9
+  rotate: false
+  xy: 1, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic10
+  rotate: false
+  xy: 1087, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic11
+  rotate: false
+  xy: 363, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic12
+  rotate: false
+  xy: 1449, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic13
+  rotate: false
+  xy: 1449, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic14
+  rotate: false
+  xy: 1, 1
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic15
+  rotate: false
+  xy: 1087, 969
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic16
+  rotate: false
+  xy: 363, 1453
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic17
+  rotate: false
+  xy: 363, 727
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic18
+  rotate: false
+  xy: 1, 727
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic19
+  rotate: false
+  xy: 1, 243
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic20
+  rotate: false
+  xy: 1, 485
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1
+vic21
+  rotate: false
+  xy: 1, 1211
+  size: 360, 240
+  orig: 360, 240
+  offset: 0, 0
+  index: -1

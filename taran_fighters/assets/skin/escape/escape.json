@@ -1,0 +1,40 @@
+{
+// FONT 
+com.badlogic.gdx.graphics.g2d.BitmapFont: { 
+	escape-font: { file: font/zreak-nfi.fnt },
+},
+
+
+// COLOR 
+com.badlogic.gdx.graphics.Color: {
+	green: { a: 1, b: 0, g: 1, r: 0 },
+	white: { a: 1, b: 1, g: 1, r: 1 },
+	red: { a: 1, b: 0, g: 0, r: 1 },
+	black: { a: 1, b: 0, g: 0, r: 0 }
+	blue: { a: 1, b: 1, g: 0, r: 0 }
+},
+
+
+// LABEL 
+com.badlogic.gdx.scenes.scene2d.ui.Label$LabelStyle: {
+	default: { font: escape-font, fontColor: red }
+},
+
+
+// WINDOW 
+com.badlogic.gdx.scenes.scene2d.ui.Window$WindowStyle: {
+	default: { titleFont: escape-font, background:taran_icon1 , titleFontColor: white },
+},
+
+// TEXTBUTTON 
+com.badlogic.gdx.scenes.scene2d.ui.TextButton$TextButtonStyle: {
+	default: { down: fix_bras_gauche, up: fix_bras_gauche, font: escape-font, fontColor: blue },
+	tin: { down: tin_bras_droit, up: tin_bras_droit, font: escape-font, fontColor: blue },
+	iul: { down: iul_bras_gauche, up: iul_bras_gauche, font: escape-font, fontColor: blue },
+	fix: { down: fix_bras_gauche, up: fix_bras_gauche, font: escape-font, fontColor: blue },
+	roz: { down: roz_bras_gauche, up: roz_bras_gauche, font: escape-font, fontColor: blue },
+	jak: { down: jak_bras_droit, up: jak_bras_droit, font: escape-font, fontColor: blue },
+},
+
+
+}
