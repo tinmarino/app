@@ -6,7 +6,11 @@ var languagePluginLoader = new Promise((resolve, reject) => {
   // This is filled in by the Makefile to be either a local file or the
   // deployed location. TODO: This should be done in a less hacky
   // way.
-  var baseURL = self.languagePluginUrl || '';
+  var scripts = document.getElementsByTagName('script');
+  var index = scripts.length - 1;
+  var myScript = scripts[index];
+
+  baseURL = myScript.src
   baseURL = baseURL.substr(0, baseURL.lastIndexOf('/')) + '/';
 
   ////////////////////////////////////////////////////////////
