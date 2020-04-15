@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+    <title>"Perlito" Perl 6 Compiler</title>
+
+    <!-- Jquery -->
+    <script src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
+
+    <!-- Jquery.terminal -->
+    <script src="https://unpkg.com/jquery.terminal/js/jquery.terminal.js"></script>
+    <link href="https://unpkg.com/jquery.terminal/css/jquery.terminal.css" rel="stylesheet"/>
+
+    <!-- Perlito -->
+    <script type="text/javascript" src="perlito6.js"></script>
+</head>
+
+
+<style>
+html { width: 100%; height: 100% }
+body {
+  width: 99%;
+  height: 99%;
+  margin: 0;
+}
+footer {
+  width: 99%;
+  height: 5%;
+  margin: 0;
+}
+.perlito {
+    background-color: #000;
+    color: #fff;
+    font-family:'Oxygen Mono', Consolas, 'Liberation Mono', 'DejaVu Sans Mono', monospace;
+    font-size: 14px;
+    overflow: auto;
+    height: 95%;
+    width: 100%;
+    margin: 0;
+    border-width: 2px;
+}
+
+</style>
+
+<body>
+
+<!-- console -->
+<div id='perlito'></div>
+
+<footer><div align="right">
+<a href="https://terminal.jcubic.pl">Jquery Terminal</a> |
+<a href="https://github.com/fglock/Perlito">Perlito</a> |
+<a href="https://raku.org/">Raku</a>
+</div></footer>
+
+<script>
+
+var result = '';
+
+// Spawn terminal handler
+jQuery(function($, undefined) {
+    $('#perlito').terminal(function(command) {
+        if (command !== '') {
+            try {
+                // TODO find a way to keep
+                // var code = 'say "<" ~ $( ' + command + ');'
+                var code = command;
+                console.log(code);
+                execute(code);
+                if (result !== undefined) {
+                    this.echo(new String(result));
+                }
+                result = '';
+            } catch(e) {
+                this.error(new String(e));
+            }
+        } else {
+           this.echo('');
+        }
+    }, {
+        greetings: 'Perlito6 Interpreter (Raku 🦋)',
+        name: 'perlito6',
+        height: 0.95 * getHeight(),
+        prompt: 'ra> '
+    });
+});
+
+function getHeight() {
+    var body = document.body,
+        html = document.documentElement;
+
+    var height = Math.max(
+        body.scrollHeight, body.offsetHeight, 
+        html.clientHeight, html.scrollHeight, html.offsetHeight );
+
+    return height;
+}
+
+function print(s) {
+    result += s + "\n";
+}
+
+function execute(code) {
+    try {
+        // compile
+        var start = new Date().getTime();
+        // compilation unit
+        var match = Perlito6$Grammar.exp_stmts(code, 0);
+        var ast = match.scalar();
+        var tmp = {v_name:"GLOBAL", v_body: ast}; 
+        tmp.__proto__ = CompUnit; 
+        ast = tmp;
+
+        // run
+        var js = ast.emit_javascript() + "\n;";
+        eval(js);
+    }
+    catch(err) {
+        print("<Error!");
+    } 
+}
+
+
+</script>
+</body>
+</html>
