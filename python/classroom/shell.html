@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- viewport-fit=cover + the safe-area padding below keep the input line clear
+     of the iPhone home indicator; interactive-widget resizes the layout instead
+     of scrolling it when the on-screen keyboard appears. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#1d2021">
+<meta name="description" content="Interactive Python 3 console running entirely in your browser, powered by Pyodide. No server, no install.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>IPyodide — Python in your browser</title>
+
+<link rel="stylesheet" href="/css/lib_color_dark_gruvbox.css">
+<link rel="stylesheet" href="/css/lib_color_use_custom_var.css">
+<link rel="stylesheet" href="/css/prism_dark_dark.css">
+<link rel="stylesheet" href="shell.css">
+</head>
+<body>
+
+<header id="bar">
+  <span id="brand">IPyodide</span>
+  <span id="status" role="status" aria-live="polite">starting Python…</span>
+  <nav id="bar-buttons">
+    <button id="btn-help" type="button" title="Keys and magics (!help)">?</button>
+    <button id="btn-clear" type="button" title="Clear the screen (Ctrl+L)">Clear</button>
+    <button id="btn-stop" type="button" title="Stop and restart Python">&#9632;</button>
+    <a id="link-exercises" href="/class/python-exercices/" title="Guided Python exercises">Exercises</a>
+  </nav>
+</header>
+
+<!-- The scrollback. role=log so a screen reader announces new output. -->
+<main id="screen" role="log" aria-live="polite" aria-label="Console output" tabindex="0"></main>
+
+<form id="prompt-line" autocomplete="off">
+  <label for="input" id="prompt">&gt;&gt;&gt;</label>
+  <!-- A textarea, not an input: multi-line blocks must be editable. -->
+  <textarea id="input" rows="1" spellcheck="false" autocomplete="off"
+            autocapitalize="off" autocorrect="off" enterkeyhint="send"
+            aria-label="Python input"
+            placeholder="Python — Enter to run, Shift+Enter for a new line"></textarea>
+  <button id="btn-send" type="submit" title="Run (Enter)">&#9654;</button>
+</form>
+
+<!-- Phone-only key row: the characters Python needs most and a touch keyboard
+     buries three taps deep. -->
+<div id="keyrow" aria-label="Extra keys">
+  <button type="button" data-ins="    " title="Indent">tab</button>
+  <button type="button" data-ins="(">(</button>
+  <button type="button" data-ins=")">)</button>
+  <button type="button" data-ins="[">[</button>
+  <button type="button" data-ins="]">]</button>
+  <button type="button" data-ins="{">{</button>
+  <button type="button" data-ins="}">}</button>
+  <button type="button" data-ins=":">:</button>
+  <button type="button" data-ins="'">'</button>
+  <button type="button" data-ins="&quot;">"</button>
+  <button type="button" data-ins="=">=</button>
+  <button type="button" data-ins="_">_</button>
+  <button type="button" data-ins="%">%</button>
+  <button type="button" data-act="up" title="Previous command">&#8593;</button>
+  <button type="button" data-act="down" title="Next command">&#8595;</button>
+  <button type="button" data-act="newline" title="New line">&crarr;</button>
+</div>
+
+<script src="/js/tin-prism-dark.js"></script>
+<script src="pyutil.js"></script>
+<script src="worker-manager.js"></script>
+<script src="shell.js"></script>
+
+</body>
+</html>

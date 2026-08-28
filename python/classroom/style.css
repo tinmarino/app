@@ -549,3 +549,74 @@ button#btn-stop.urgent { animation: stop-pulse 0.9s ease-in-out infinite; }
   0%, 100% { background: var(--gb-faded_red); }
   50%      { background: var(--gb-bright_red); }
 }
+
+/* ==========================================================================
+   Keyboard navigation
+   Every control is a real <button> or a focusable [role=button], so Tab order
+   follows the DOM. What was missing is a visible focus ring: the browser
+   default is invisible against this palette.
+   ========================================================================== */
+:focus-visible {
+  outline: 2px solid var(--gb-bright_aqua);
+  outline-offset: 2px;
+}
+#exercise-list li:focus-visible {
+  outline-offset: -2px;
+  background: var(--gb-dark1);
+}
+#editor:focus-visible, #console-input:focus-visible, #run-args:focus-visible {
+  outline: none;   /* these show focus through their own border colour */
+}
+/* Skip the splitters when tabbing through controls is what you want; they stay
+   reachable, but the ring makes it obvious what has focus. */
+.splitter:focus-visible { outline-offset: 0; }
+
+#btn-menu { display: none; }
+
+/* ==========================================================================
+   Phone layout: the sidebar becomes a swipe-in overlay
+   ========================================================================== */
+@media (max-width: 700px) {
+  #btn-menu { display: inline-block; padding: 4px 10px; font-size: 1.1rem; }
+
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 30;
+    width: 78vw !important;      /* beats the inline width left by a drag */
+    max-width: 320px;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease-out;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.5);
+  }
+  body.sidebar-open #sidebar { transform: translateX(0); }
+
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  body.sidebar-open #sidebar-backdrop { display: block; }
+
+  /* The drag handles are useless without a pointer */
+  #splitter-x { display: none; }
+
+  #toolbar { gap: 6px; padding: 6px 8px; }
+  #toolbar-buttons { gap: 4px; }
+  #toolbar button { padding: 6px 10px; font-size: 0.85rem; }
+  #exercise-title { font-size: 0.9rem; }
+
+  /* Touch targets */
+  #exercise-list li { padding: 12px 14px; }
+  .tab { padding: 10px 12px; }
+
+  /* Give the editor and the console room on a small screen */
+  #editor, #editor-highlight { font-size: 13px; }
+  #output-area { height: 45vh !important; min-height: 140px; }
+  #run-bar { flex-wrap: wrap; }
+  #run-bar label { flex-basis: 100%; }
+}

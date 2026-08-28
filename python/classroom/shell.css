@@ -1,0 +1,205 @@
+/* ============================================================
+   IPyodide — standalone full-screen Python console
+   Mobile-first: this is meant to be usable one-handed on a phone.
+   Colours come from /css/lib_color_dark_gruvbox.css
+   ============================================================ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--gb-dark0_hard);
+  color: var(--gb-light1);
+  font-family: 'Consolas', 'Fira Code', 'DejaVu Sans Mono', monospace;
+  font-size: 15px;
+  /* Stop iOS zooming when the textarea is focused, without locking pinch-zoom */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  /* dvh follows the visible viewport as mobile browser chrome comes and goes */
+  height: 100dvh;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* --- Top bar --- */
+#bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  padding-top: calc(8px + env(safe-area-inset-top));
+  background: var(--gb-dark1);
+  border-bottom: 1px solid var(--gb-dark2);
+}
+#brand {
+  font-weight: bold;
+  color: var(--gb-bright_purple);
+  white-space: nowrap;
+}
+#status {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: var(--gb-gray_245);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#bar-buttons { display: flex; align-items: center; gap: 6px; }
+
+#bar-buttons button,
+#bar-buttons a {
+  background: var(--gb-dark2);
+  color: var(--gb-light1);
+  border: 1px solid var(--gb-dark3);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  min-height: 34px;          /* touch target */
+}
+#bar-buttons button:hover,
+#bar-buttons a:hover { background: var(--gb-dark3); }
+#btn-stop { color: var(--gb-bright_red); }
+#btn-stop.urgent { animation: stop-pulse 0.9s ease-in-out infinite; }
+@keyframes stop-pulse {
+  0%, 100% { background: var(--gb-faded_red); }
+  50%      { background: var(--gb-bright_red); }
+}
+
+/* --- Scrollback --- */
+#screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+#screen > span { display: block; }
+
+.tb-prompt    { color: var(--gb-bright_green); user-select: none; }
+.repr         { color: var(--gb-bright_purple); }
+.error        { color: var(--gb-bright_red); }
+.help         { color: var(--gb-neutral_aqua); }
+.completions  { color: var(--gb-neutral_yellow); }
+
+/* Traceback colouring, same classes pyutil.js emits for the classroom */
+.tb-banner { font-weight: bold; }
+.tb-ok     { color: var(--gb-bright_green); }
+.tb-bad    { color: var(--gb-bright_red); }
+.tb-head   { color: var(--gb-gray_245); }
+.tb-kw     { color: var(--gb-gray_245); }
+.tb-file   { color: var(--gb-neutral_blue); }
+.tb-line   { color: var(--gb-bright_yellow); }
+.tb-func   { color: var(--gb-bright_aqua); }
+.tb-caret  { color: var(--gb-bright_red); font-weight: bold; }
+.tb-exc    { color: var(--gb-bright_red); font-weight: bold; }
+.tb-msg    { color: var(--gb-bright_orange); }
+
+/* --- Input line --- */
+#prompt-line {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--gb-dark1);
+  border-top: 1px solid var(--gb-dark2);
+}
+#prompt {
+  color: var(--gb-bright_green);
+  line-height: 1.5;
+  padding-top: 2px;
+  user-select: none;
+  white-space: pre;
+}
+#input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--gb-light0);
+  caret-color: var(--gb-bright_aqua);
+  /* 16px keeps iOS Safari from zooming the page on focus */
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  tab-size: 4;
+  padding: 2px 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre;
+  overflow-x: auto;
+}
+#input::selection { background: rgba(131, 165, 152, 0.40); }
+#btn-send {
+  background: var(--gb-faded_green);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0 14px;
+  min-height: 36px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+#btn-send:hover { background: var(--gb-neutral_green); }
+
+/* --- Phone key row --- */
+#keyrow {
+  flex: 0 0 auto;
+  display: none;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 8px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  background: var(--gb-dark0);
+  border-top: 1px solid var(--gb-dark2);
+  scrollbar-width: none;
+}
+#keyrow::-webkit-scrollbar { display: none; }
+#keyrow button {
+  flex: 0 0 auto;
+  min-width: 38px;
+  min-height: 38px;
+  background: var(--gb-dark2);
+  color: var(--gb-light1);
+  border: 1px solid var(--gb-dark3);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+#keyrow button:active { background: var(--gb-bright_aqua); color: var(--gb-dark0); }
+
+/* Coarse pointer means a touch screen: that is when the key row earns its space */
+@media (pointer: coarse), (max-width: 700px) {
+  #keyrow { display: flex; }
+  #brand { font-size: 0.9rem; }
+  #status { flex-basis: 100%; }
+  #bar { flex-wrap: wrap; row-gap: 4px; }
+  #screen { font-size: 14px; }
+}
+
+/* Keyboard focus must be visible: the default ring is invisible here */
+:focus-visible {
+  outline: 2px solid var(--gb-bright_aqua);
+  outline-offset: 2px;
+}
+#input:focus-visible { outline: none; }
+#prompt-line:focus-within { border-top-color: var(--gb-neutral_blue); }

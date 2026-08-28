@@ -14,15 +14,18 @@
 <body>
 
 <!-- Left sidebar: exercise list -->
-<aside id="sidebar">
+<aside id="sidebar" aria-label="Exercises">
   <h2 id="sidebar-title">Python Exercises</h2>
   <ul id="exercise-list"></ul>
   <p id="sync-status">Progress is saved in this browser.</p>
   <div id="sidebar-footer">
-    <button id="btn-login" title="Optional: log in to submit your work to the teacher">Login</button>
-    <button id="btn-push" title="Optional: submit your progress (needs login)" disabled>Submit</button>
+    <button id="btn-login" type="button" title="Optional: log in to submit your work to the teacher">Login</button>
+    <button id="btn-push" type="button" title="Optional: submit your progress (needs login)" disabled>Submit</button>
   </div>
 </aside>
+
+<!-- Tap-to-dismiss backdrop, phone layout only -->
+<div id="sidebar-backdrop" hidden></div>
 
 <!-- Drag to resize the sidebar -->
 <div id="splitter-x" class="splitter" role="separator" aria-orientation="vertical"
@@ -33,15 +36,19 @@
 
   <!-- Top toolbar -->
   <div id="toolbar">
+    <!-- Phone-only: the sidebar is an overlay there, also openable by swiping
+         right from the left edge and closable by swiping left. -->
+    <button id="btn-menu" type="button" aria-controls="sidebar" aria-expanded="false"
+            title="Show the exercise list">&#9776;</button>
     <span id="exercise-title">Select an exercise</span>
     <div id="toolbar-buttons">
-      <button id="btn-run" title="Run code (Ctrl+Enter)">&#9654; Run</button>
-      <button id="btn-check" title="Check against tests">&#10003; Check</button>
-      <button id="btn-reset" title="Reset to template">&#8635; Reset</button>
-      <button id="btn-stop" title="Stop and restart the Python runtime (use if your code hangs)">&#9632; Stop</button>
-      <button id="btn-description" title="Show the full task description">&#9432; Description</button>
-      <button id="btn-console" title="Toggle interactive console">&gt;_ Console</button>
-      <button id="btn-download" title="Download completed exercises as Markdown" disabled>&#8595; Download</button>
+      <button id="btn-run" type="button" title="Run code (Ctrl+Enter)">&#9654; Run</button>
+      <button id="btn-check" type="button" title="Check against tests">&#10003; Check</button>
+      <button id="btn-reset" type="button" title="Reset to template">&#8635; Reset</button>
+      <button id="btn-stop" type="button" title="Stop and restart the Python runtime (use if your code hangs)">&#9632; Stop</button>
+      <button id="btn-description" type="button" title="Show the full task description">&#9432; Description</button>
+      <button id="btn-console" type="button" title="Toggle interactive console">&gt;_ Console</button>
+      <button id="btn-download" type="button" title="Download completed exercises as Markdown" disabled>&#8595; Download</button>
     </div>
   </div>
 
@@ -56,7 +63,7 @@
     <section id="description-panel" class="hidden" aria-labelledby="description-title">
       <header id="description-head">
         <span id="description-title">Description</span>
-        <button id="btn-description-close" title="Close (Esc)">&times;</button>
+        <button id="btn-description-close" type="button" title="Close (Esc)">&times;</button>
       </header>
       <div id="description-body" class="markdown"></div>
     </section>
@@ -72,7 +79,7 @@
     <textarea id="run-args" rows="1" spellcheck="false" autocomplete="off"
               autocapitalize="off" wrap="off"
               placeholder="print(my_function(...))"></textarea>
-    <button id="btn-run-reset" title="Restore the exercise's default call">&#8635;</button>
+    <button id="btn-run-reset" type="button" title="Restore the exercise's default call">&#8635;</button>
   </div>
 
   <!-- Drag to resize the editor / output split -->
@@ -81,10 +88,10 @@
 
   <!-- Output area with tabs -->
   <div id="output-area">
-    <div id="output-tabs">
-      <button class="tab active" data-tab="output">Output</button>
-      <button class="tab" data-tab="tests">Tests</button>
-      <button class="tab" data-tab="console">&gt;_ Console (iPython)</button>
+    <div id="output-tabs" role="tablist" aria-label="Output panes">
+      <button class="tab active" type="button" role="tab" aria-selected="true" data-tab="output">Output</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" data-tab="tests">Tests</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" data-tab="console">&gt;_ Console (iPython)</button>
     </div>
     <div id="output-pane" class="tab-content active">
       <pre id="output">Loading Python runtime...</pre>
@@ -118,8 +125,8 @@
     <label>Username<input id="login-user" type="text" autocomplete="username"></label>
     <label>Password<input id="login-pass" type="password" autocomplete="current-password"></label>
     <div class="modal-buttons">
-      <button id="login-ok">Login</button>
-      <button id="login-cancel">Cancel</button>
+      <button id="login-ok" type="button">Login</button>
+      <button id="login-cancel" type="button">Cancel</button>
     </div>
     <p id="login-error" class="error"></p>
   </div>
@@ -135,6 +142,7 @@
 <script src="/js/tin-prism-dark.js"></script>
 
 <!-- App scripts -->
+<script src="pyutil.js"></script>
 <script src="markdown.js"></script>
 <script src="worker-manager.js"></script>
 <script src="app.js"></script>

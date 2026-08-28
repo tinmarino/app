@@ -22,9 +22,14 @@
   const S3_REGION = 'us-east-1';
   const COOKIE_KEY = 'py_classroom_creds';
   // localStorage keys: current editor buffer, and the last code that passed the tests
-  const CODE_PREFIX   = 'py_ex_';
-  const SOLVED_PREFIX = 'py_solved_';
-  const RUN_PREFIX    = 'py_run_';   // the edited "Run with" snippet
+  // Keys are namespaced by exercise set: `?ex=` can point at another collection
+  // whose ids ("01", "02", ...) would otherwise share this one's saved code and
+  // green checkmarks.
+  const SET_KEY = EXERCISES_BASE.replace(/^https?:\/\/[^/]+/, '').replace(/\W+/g, '_');
+  const CODE_PREFIX   = 'py_ex_'     + SET_KEY + '_';
+  const SOLVED_PREFIX = 'py_solved_' + SET_KEY + '_';
+  const RUN_PREFIX    = 'py_run_'    + SET_KEY + '_';
+  const DONE_KEY      = 'py_done_'   + SET_KEY;
 
   // === State ===
   let exercises = [];
@@ -53,6 +58,7 @@
   const $runArgs = document.getElementById('run-args');
   const $btnRunReset = document.getElementById('btn-run-reset');
   const $btnStop = document.getElementById('btn-stop');
+  const $btnMenu = document.getElementById('btn-menu');
   const $btnDescription = document.getElementById('btn-description');
   const $btnDescriptionClose = document.getElementById('btn-description-close');
   const $descriptionPanel = document.getElementById('description-panel');
@@ -66,158 +72,14 @@
   const $loginCancel = document.getElementById('login-cancel');
   const $loginError = document.getElementById('login-error');
 
-  // === Python output / traceback colouring ================================
-  // Prism has no traceback grammar, so mark up the few line shapes CPython
-  // emits and hand the embedded source lines to the python grammar.
-  function esc(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  function highlightPy(code) {
-    if (window.Prism && Prism.languages.python) {
-      return Prism.highlight(code, Prism.languages.python, 'python');
-    }
-    return esc(code);
-  }
-
-  function renderPyLine(line) {
-    let m;
-
-    // Our own banners
-    if ((m = line.match(/^--- (ALL TESTS PASSED|.*?) ---$/))) {
-      const ok = /ALL TESTS PASSED/.test(line);
-      return '<span class="tb-banner ' + (ok ? 'tb-ok' : 'tb-bad') + '">' + esc(line) + '</span>';
-    }
-
-    // Traceback (most recent call last):
-    if (/^Traceback \(most recent call last\):/.test(line)) {
-      return '<span class="tb-head">' + esc(line) + '</span>';
-    }
-
-    //   File "/path/to.py", line 12, in func
-    if ((m = line.match(/^(\s*)File "(.*?)", line (\d+)(?:, in (.*))?$/))) {
-      return m[1] + '<span class="tb-kw">File </span>'
-        + '<span class="tb-file">"' + esc(m[2]) + '"</span>'
-        + '<span class="tb-kw">, line </span><span class="tb-line">' + m[3] + '</span>'
-        + (m[4] ? '<span class="tb-kw">, in </span><span class="tb-func">' + esc(m[4]) + '</span>' : '');
-    }
-
-    // Caret / squiggle markers under the offending expression
-    if (/^\s*[\^~]+\s*$/.test(line) || /^\s*[~\^]{2,}[~\^\s]*$/.test(line)) {
-      return '<span class="tb-caret">' + esc(line) + '</span>';
-    }
-
-    // ...<5 lines>...  (CPython 3.13+ elision)
-    if (/^\s*\.\.\..*\.\.\.\s*$/.test(line)) {
-      return '<span class="tb-head">' + esc(line) + '</span>';
-    }
-
-    // ExceptionName: message   (at column 0, this is the final line)
-    if ((m = line.match(/^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Warning|Exit))(:\s?)([\s\S]*)$/))) {
-      return '<span class="tb-exc">' + esc(m[1]) + '</span>'
-        + '<span class="tb-kw">' + esc(m[2]) + '</span>'
-        + '<span class="tb-msg">' + esc(m[3]) + '</span>';
-    }
-
-    // Indented source echo -> real Python highlighting
-    if (/^\s+\S/.test(line)) {
-      const indent = line.match(/^\s*/)[0];
-      return indent + highlightPy(line.slice(indent.length));
-    }
-
-    return esc(line);
-  }
-
-  // Paint `text` into `el`. Plain program output stays plain; tracebacks get
-  // marked up line by line.
-  function renderOutput(el, text) {
-    if (!text) { el.textContent = ''; return; }
-    el.innerHTML = text.split('\n').map(renderPyLine).join('\n');
-  }
-
-  // === Python smart indentation ==========================================
-  // No small standalone library does this without dragging in a whole editor
-  // (CodeMirror / Ace / Monaco each ship their own Python mode). These are the
-  // same rules those modes apply, kept deliberately short:
-  //   - a line ending in ':'        -> indent one level deeper
-  //   - an unclosed '(', '[', '{'   -> indent one level deeper
-  //   - return/pass/break/continue/raise -> dedent one level (leaves the suite)
-  //   - otherwise                   -> keep the current indent
-  const INDENT = '    ';
-  const INDENT_N = 4;
-  const DEDENT_RE = /^\s*(return|pass|break|continue|raise)\b/;
-
-  // Blank out comments and string literals so brackets inside them don't count.
-  // Length is preserved so caller offsets stay valid.
-  function stripLiterals(src) {
-    let out = '', quote = null, i = 0;
-    while (i < src.length) {
-      const c = src[i];
-      if (quote) {
-        if (c === '\\') { out += '  '; i += 2; continue; }
-        if (src.startsWith(quote, i)) { out += ' '.repeat(quote.length); i += quote.length; quote = null; continue; }
-        out += (c === '\n' ? '\n' : ' ');
-        i++;
-        continue;
-      }
-      if (c === '#') { while (i < src.length && src[i] !== '\n') { out += ' '; i++; } continue; }
-      const triple = src.substr(i, 3);
-      if (triple === '"""' || triple === "'''") { quote = triple; out += '   '; i += 3; continue; }
-      if (c === '"' || c === "'") { quote = c; out += ' '; i++; continue; }
-      out += c;
-      i++;
-    }
-    return out;
-  }
-
-  // Net unclosed-bracket depth
-  function bracketDepth(src) {
-    let d = 0;
-    for (const c of stripLiterals(src)) {
-      if ('([{'.includes(c)) d++;
-      else if (')]}'.includes(c)) d = Math.max(0, d - 1);
-    }
-    return d;
-  }
-
-  // The indent that the line following `before` should start with
-  function indentAfter(before) {
-    const cur = before.split('\n').pop();
-    const clean = stripLiterals(before).split('\n').pop();
-    const indent = (cur.match(/^[ \t]*/) || [''])[0].replace(/\t/g, INDENT);
-
-    if (/:[ \t]*$/.test(clean)) return indent + INDENT;     // opens a suite
-    if (bracketDepth(before) > 0) return indent + INDENT;   // inside (), [], {}
-    if (DEDENT_RE.test(cur)) {                              // leaves the suite
-      return indent.slice(0, Math.max(0, indent.length - INDENT_N));
-    }
-    return indent;
-  }
-
-  // Insert a newline with smart indentation into a textarea
-  function smartNewline(el, after) {
-    const v = el.value;
-    const at = el.selectionStart;
-    const ins = '\n' + indentAfter(v.slice(0, at));
-    el.value = v.slice(0, at) + ins + v.slice(el.selectionEnd);
-    el.selectionStart = el.selectionEnd = at + ins.length;
-    if (after) after();
-  }
-
-  // Backspace at the head of an indent removes a whole level
-  function smartBackspace(el, ev, after) {
-    const at = el.selectionStart;
-    if (at !== el.selectionEnd || at === 0) return false;
-    const lineStart = el.value.lastIndexOf('\n', at - 1) + 1;
-    const before = el.value.slice(lineStart, at);
-    if (before.length === 0 || /[^ ]/.test(before)) return false;
-    const remove = before.length % INDENT_N || INDENT_N;
-    ev.preventDefault();
-    el.value = el.value.slice(0, at - remove) + el.value.slice(at);
-    el.selectionStart = el.selectionEnd = at - remove;
-    if (after) after();
-    return true;
-  }
+  // === Shared helpers (pyutil.js) =========================================
+  // Indentation and traceback colouring live in pyutil.js so the standalone
+  // shell behaves exactly the same way.
+  const {
+    esc, highlightPy, renderPyLine, renderOutput,
+    INDENT, INDENT_N, stripLiterals, bracketDepth, indentAfter,
+    smartNewline, smartBackspace
+  } = window.PyUtil;
 
   // === Syntax highlighting ===============================================
   // Repaint the <pre> underneath the transparent textarea. A trailing newline
@@ -252,11 +114,14 @@
 
     function clamp(px) { return Math.max(min, Math.min(px, maxFn())); }
 
+    let dragging = null;
+
     handle.addEventListener('pointerdown', ev => {
+      if (dragging) return;              // one drag at a time
       ev.preventDefault();
-      const start    = vertical ? ev.clientX : ev.clientY;
-      const startPx  = getSize();
-      handle.setPointerCapture(ev.pointerId);
+      const start   = vertical ? ev.clientX : ev.clientY;
+      const startPx = getSize();
+      try { handle.setPointerCapture(ev.pointerId); } catch { /* not captured */ }
       handle.classList.add('dragging');
       document.body.classList.add('resizing');
 
@@ -264,17 +129,30 @@
         const delta = (vertical ? e.clientX : e.clientY) - start;
         setSize(clamp(startPx + delta * opts.sign));
       };
-      const onUp = () => {
-        handle.releasePointerCapture(ev.pointerId);
+      // pointercancel and lostpointercapture must clean up too: a cancelled
+      // touch gesture would otherwise leave this listener installed and the
+      // next drag would run two of them over stale start values.
+      const finish = () => {
+        if (!dragging) return;
+        dragging = null;
+        try { handle.releasePointerCapture(ev.pointerId); } catch { /* gone */ }
         handle.classList.remove('dragging');
         document.body.classList.remove('resizing');
         handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointerup', finish);
+        handle.removeEventListener('pointercancel', finish);
+        handle.removeEventListener('lostpointercapture', finish);
         localStorage.setItem(key, String(getSize()));
       };
+      dragging = { finish };
       handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointerup', finish);
+      handle.addEventListener('pointercancel', finish);
+      handle.addEventListener('lostpointercapture', finish);
     });
+
+    // A size saved on a wide window must not squeeze the layout on a narrow one
+    window.addEventListener('resize', () => setSize(clamp(getSize())));
 
     // Double-click resets, arrows nudge when focused (keyboard accessible)
     handle.addEventListener('dblclick', () => {
@@ -310,7 +188,64 @@
     maxFn:   () => Math.max(80, window.innerHeight - 220)
   });
 
+  // === Mobile: swipe the sidebar in and out ===============================
+  // On a narrow screen the sidebar is an overlay. Swiping right from the left
+  // edge opens it, swiping left closes it. Vertical scrolling must still win,
+  // so a gesture is only claimed once it is clearly horizontal.
+  const SWIPE_MIN = 60;        // px of horizontal travel needed
+  const SWIPE_SLOP = 40;       // max vertical drift before we let scrolling win
+  const EDGE_ZONE = 40;        // px from the left edge that can start an open
+
+  function isNarrow() { return window.matchMedia('(max-width: 700px)').matches; }
+
+  function setSidebarOpen(open) {
+    document.body.classList.toggle('sidebar-open', open);
+    $btnMenu.setAttribute('aria-expanded', String(open));
+  }
+
+  let touchStart = null;
+  document.addEventListener('touchstart', e => {
+    if (!isNarrow() || e.touches.length !== 1) { touchStart = null; return; }
+    const t = e.touches[0];
+    touchStart = { x: t.clientX, y: t.clientY };
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (!touchStart || !isNarrow()) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    const start = touchStart;
+    touchStart = null;
+    if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
+    const open = document.body.classList.contains('sidebar-open');
+    if (dx > 0 && !open && start.x <= EDGE_ZONE) setSidebarOpen(true);
+    else if (dx < 0 && open) setSidebarOpen(false);
+  }, { passive: true });
+
+  // Same thing for people who are not swiping
+  $btnMenu.addEventListener('click', () => {
+    setSidebarOpen(!document.body.classList.contains('sidebar-open'));
+  });
+  const $backdrop = document.getElementById('sidebar-backdrop');
+  $backdrop.addEventListener('click', () => setSidebarOpen(false));
+
+  // Picking an exercise on a phone should get out of the way
+  $list.addEventListener('click', () => { if (isNarrow()) setSidebarOpen(false); });
+  window.addEventListener('resize', () => { if (!isNarrow()) setSidebarOpen(false); });
+
   // === Tabs ===
+  const $tabs = [...document.querySelectorAll('#output-tabs .tab')];
+  $tabs.forEach((btn, i) => {
+    btn.addEventListener('keydown', e => {
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      const next = $tabs[(i + step + $tabs.length) % $tabs.length];
+      next.focus();
+      next.click();
+    });
+  });
   document.querySelectorAll('#output-tabs .tab').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#output-tabs .tab').forEach(b => b.classList.remove('active'));
@@ -382,39 +317,58 @@
     exercises.forEach((ex, idx) => {
       const li = document.createElement('li');
       li.textContent = ex.title;
-      if (done.includes(ex.id)) li.classList.add('done');
+      // Operable without a mouse: focusable, activated by Enter/Space, and
+      // announced as a button rather than a bare list item.
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      if (done.includes(ex.id)) {
+        li.classList.add('done');
+        li.setAttribute('aria-label', ex.title + ' (completed)');
+      }
       li.addEventListener('click', () => selectExercise(idx));
+      li.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectExercise(idx); }
+      });
       $list.appendChild(li);
     });
   }
 
+  let selectToken = 0;
+
   async function selectExercise(idx) {
-    currentExercise = exercises[idx];
+    const token = ++selectToken;
+    const exercise = exercises[idx];
+    currentExercise = exercise;
     // Highlight active
     $list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === idx));
     $title.textContent = currentExercise.title;
 
     // Load exercise markdown/content
     try {
-      const resp = await fetch(EXERCISES_BASE + '/' + currentExercise.file);
+      const resp = await fetch(EXERCISES_BASE + '/' + exercise.file);
       const text = await resp.text();
+      // A slower earlier request must not overwrite a newer selection
+      if (token !== selectToken) return;
       const parsed = parseExercise(text);
-      currentExercise._parsed = parsed;
+      exercise._parsed = parsed;
 
       // Load saved code or template
-      const saved = localStorage.getItem(CODE_PREFIX + currentExercise.id);
+      const saved = localStorage.getItem(CODE_PREFIX + exercise.id);
       $editor.value = saved || parsed.template;
       repaint();
 
       if (!$descriptionPanel.classList.contains('hidden')) renderDescription();
 
-      const savedRun = localStorage.getItem(RUN_PREFIX + currentExercise.id);
+      const savedRun = localStorage.getItem(RUN_PREFIX + exercise.id);
       $runArgs.value = savedRun !== null ? savedRun : parsed.run;
       $runArgs.disabled = false;
       autoGrowRun();
     } catch (e) {
+      if (token !== selectToken) return;
       $editor.value = '# Error loading exercise\n';
       repaint();
+      $runArgs.value = '';
+      $runArgs.disabled = true;
       console.error(e);
     }
 
@@ -451,7 +405,7 @@
   // "Run" shows something instead of "(no output)".
   async function runCode() {
     const code = $editor.value;
-    localStorage.setItem(CODE_PREFIX + (currentExercise ? currentExercise.id : '_scratch'), code);
+    if (currentExercise) localStorage.setItem(CODE_PREFIX + currentExercise.id, code);
     const call = $runArgs.value.trim();
     const source = call ? code + '\n' + call + '\n' : code;
     $output.textContent = 'Running...\n';
@@ -505,7 +459,11 @@
 
   // === Reset ===
   function resetCode() {
-    if (!currentExercise) return;
+    if (!currentExercise || !currentExercise._parsed) {
+      renderOutput($output, '--- ERROR ---\nThis exercise did not load, nothing to reset.\n');
+      switchTab('output');
+      return;
+    }
     if (!confirm('Reset to the original template?')) return;
     $editor.value = currentExercise._parsed.template;
     repaint();
@@ -543,7 +501,9 @@
 
   function switchTab(name) {
     document.querySelectorAll('#output-tabs .tab').forEach(b => {
-      b.classList.toggle('active', b.dataset.tab === name);
+      const on = b.dataset.tab === name;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
     });
     document.querySelectorAll('.tab-content').forEach(p => {
       p.classList.toggle('active', p.id === name + '-pane');
@@ -626,11 +586,13 @@
   function applyMagic(src) {
     const line = src.trim();
 
-    if (line === '?' || line === '!help' || line === '%help' || line === 'help()') {
+    // Only the ! and % prefixes are intercepted: plain `clear` or `help()` must
+    // keep meaning whatever they mean in Python.
+    if (line === '?' || line === '!help' || line === '%help') {
       appendConsole(HELP_TEXT, 'help');
       return '';
     }
-    if (line === '%clear' || line === '!clear' || line === 'clear') {
+    if (line === '%clear' || line === '!clear') {
       $consoleHistory.innerHTML = '';
       return '';
     }
@@ -673,8 +635,11 @@
     const src = $consoleInput.value;
     if (!src.trim()) { setConsoleInput(''); return; }
 
-    // Echo exactly what was typed, prompt-per-line like a terminal
-    src.split('\n').forEach((l, i) => appendConsole((i === 0 ? '>>> ' : '... ') + l, null, 'code'));
+    // Echo exactly what was typed, prompt-per-line like a terminal.
+    // Keep the nodes: on "incomplete" they are removed by reference, because
+    // anything else (a ready banner, a Ctrl+L) may have been appended since.
+    const echoNodes = src.split('\n').map((l, i) =>
+      appendConsole((i === 0 ? '>>> ' : '... ') + l, null, 'code'));
 
     // Remember it, then clear the input
     if (consoleCmdHistory[consoleCmdHistory.length - 1] !== src) consoleCmdHistory.push(src);
@@ -705,10 +670,8 @@
       const back = src.replace(/\n+$/, '');
       setConsoleInput(back + '\n' + indentAfter(back));
       $consoleInput.selectionStart = $consoleInput.selectionEnd = $consoleInput.value.length;
-      // Drop the echo we just printed, it will be re-echoed on the real submit
-      for (let i = 0; i < src.split('\n').length; i++) {
-        if ($consoleHistory.lastChild) $consoleHistory.removeChild($consoleHistory.lastChild);
-      }
+      // Drop the echo we printed; it is re-echoed on the real submit
+      echoNodes.forEach(node => { if (node && node.parentNode) node.remove(); });
       consoleCmdHistory.pop();
       consoleHistoryIdx = consoleCmdHistory.length;
       return;
@@ -751,7 +714,9 @@
     }
     if (!matches || !matches.length) return;
 
-    const head = before.slice(0, start);
+    // `start` comes from CPython's rlcompleter and counts code points, while
+    // JS slices count UTF-16 units. They differ once an astral char is present.
+    const head = Array.from(before).slice(0, start).join('');
     const insert = matches.length === 1 ? matches[0] : commonPrefix(matches);
     if (insert && head + insert !== before) {
       $consoleInput.value = head + insert + $consoleInput.value.slice(at);
@@ -838,14 +803,14 @@
 
   // === Done list (localStorage) ===
   function getDoneList() {
-    try { return JSON.parse(localStorage.getItem('py_done') || '[]'); }
+    try { return JSON.parse(localStorage.getItem(DONE_KEY) || '[]'); }
     catch { return []; }
   }
   function markDone(id) {
     const done = getDoneList();
     if (!done.includes(id)) {
       done.push(id);
-      localStorage.setItem('py_done', JSON.stringify(done));
+      localStorage.setItem(DONE_KEY, JSON.stringify(done));
       renderExerciseList();
     }
     refreshStatus();
@@ -916,12 +881,15 @@
     try {
       const raw = getCookie(COOKIE_KEY);
       if (!raw) return null;
-      return JSON.parse(atob(raw));
+      const bytes = Uint8Array.from(atob(raw), ch => ch.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
     } catch { return null; }
   }
   function setCreds(creds) {
     // Store base64-encoded JSON in a cookie (30 days)
-    const val = btoa(JSON.stringify(creds));
+    // btoa() throws on anything outside Latin-1, which a real name easily is
+    const val = btoa(String.fromCharCode(
+      ...new TextEncoder().encode(JSON.stringify(creds))));
     document.cookie = COOKIE_KEY + '=' + val + '; path=/; max-age=' + (30*86400) + '; SameSite=Strict';
     $btnPush.disabled = false;
     refreshStatus();
@@ -1131,9 +1099,10 @@
   $btnDescription.addEventListener('click', () => showDescription());
   $btnDescriptionClose.addEventListener('click', () => showDescription(false));
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !$descriptionPanel.classList.contains('hidden')) {
-      showDescription(false);
-    }
+    if (e.key !== 'Escape') return;
+    // The modal sits above the panel, so it is dismissed first
+    if (!$loginModal.classList.contains('hidden')) { hideLogin(); return; }
+    if (!$descriptionPanel.classList.contains('hidden')) showDescription(false);
   });
 
   function autoGrowRun() {

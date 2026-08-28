@@ -9,8 +9,8 @@
  *   bold, italic, strikethrough, links, blockquotes, lists, pipe tables,
  *   horizontal rules
  *
- * Everything is escaped before any markup is emitted, so exercise content
- * cannot inject HTML.
+ * Everything is escaped before any markup is emitted, and link targets are
+ * validated by safeHref(), so exercise content cannot inject HTML.
  *
  * renderMarkdown(src, {headingShift}) -> HTML string
  *   headingShift is subtracted from each heading level, so `### x` with
@@ -20,7 +20,19 @@
   'use strict';
 
   function escapeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Quotes matter: escaped text is also interpolated into attribute values,
+    // where a bare " would end the attribute and let markup in.
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Only plain, quote-free, relative or http(s)/mailto targets are allowed.
+  // Anything else is left as literal text rather than becoming a link.
+  function safeHref(href) {
+    if (/["'<>`\\\s]/.test(href)) return null;
+    if (/^(https?:\/\/|mailto:)[^\s]+$/i.test(href)) return href;
+    if (/^[.#/][^\s]*$/.test(href)) return href;
+    return null;
   }
 
   function highlight(code, lang) {
@@ -42,19 +54,25 @@
 
     out = escapeHtml(out);
 
-    // [label](href) — only http(s), mailto and relative targets
+    // [label](href) — the href is validated, then escaped again for the attribute
     out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (m, label, href) {
-      if (/^(https?:|mailto:|[./#])/.test(href)) {
-        return '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
-      }
-      return m;
+      const raw = href.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+      const safe = safeHref(raw);
+      if (!safe) return m;
+      return '<a href="' + escapeHtml(safe) + '" target="_blank" rel="noopener noreferrer">' +
+             label + '</a>';
     });
 
-    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-    out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+    out = out.replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, '<strong>$1</strong>');
+    // The delimiters must hug their content, so `2 * 3 * 4` stays arithmetic
+    out = out.replace(/(^|[^*\w])\*(\S(?:[^*\n]*\S)?)\*(?![\w*])/g, '$1<em>$2</em>');
+    out = out.replace(/(^|[^_\w])_(\S(?:[^_\n]*\S)?)_(?![\w_])/g, '$1<em>$2</em>');
+    out = out.replace(/~~(\S(?:[^~]*\S)?)~~/g, '<del>$1</del>');
 
-    return out.replace(/@@MDCODE(\d+)ENDMD@@/g, function (_, i) { return codes[+i]; });
+    return out.replace(/@@MDCODE(\d+)ENDMD@@/g, function (whole, i) {
+      // A literal look-alike written by hand has no entry: leave it as text
+      return codes[+i] !== undefined ? codes[+i] : whole;
+    });
   }
 
   function renderTable(rows) {
