@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- user-scalable=no: pinching must resize the code font (app.js), not the
+     page. Zooming the whole view on a phone breaks the fixed editor layout. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Python Exercises - Tinmarino Classroom</title>
 
 <!-- Gruvbox theme (same as main site, served from the Page repo) -->
@@ -83,9 +85,11 @@
     <button id="btn-run-reset" type="button" title="Restore the exercise's default call">&#8635;</button>
   </div>
 
-  <!-- Drag to resize the editor / output split -->
+  <!-- Drag to resize the editor / output split. On a phone it is also the
+       drawer handle: tap it, or swipe up from the bottom edge, to show the
+       output; swipe down to hide it again. -->
   <div id="splitter-y" class="splitter" role="separator" aria-orientation="horizontal"
-       tabindex="0" title="Drag to resize (double-click to reset)"></div>
+       tabindex="0" title="Drag to resize (double-click to reset; tap to show/hide on a phone)"></div>
 
   <!-- Output area with tabs -->
   <div id="output-area">
@@ -115,6 +119,9 @@
   </div>
 
 </main>
+
+<!-- Transient "16 px" readout shown while pinch-zooming the code font -->
+<div id="zoom-badge" class="hidden" aria-hidden="true"></div>
 
 <!-- Login modal -->
 <div id="login-modal" class="modal hidden">

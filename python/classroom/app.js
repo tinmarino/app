@@ -151,8 +151,13 @@
       handle.addEventListener('lostpointercapture', finish);
     });
 
-    // A size saved on a wide window must not squeeze the layout on a narrow one
-    window.addEventListener('resize', () => setSize(clamp(getSize())));
+    // A size saved on a wide window must not squeeze the layout on a narrow one.
+    // `skip` guards the collapsed phone drawer: its height is pinned to 0 by
+    // CSS, so re-clamping would write a bogus inline height it keeps forever.
+    window.addEventListener('resize', () => {
+      if (opts.skip && opts.skip()) return;
+      setSize(clamp(getSize()));
+    });
 
     // Double-click resets, arrows nudge when focused (keyboard accessible)
     handle.addEventListener('dblclick', () => {
@@ -172,6 +177,7 @@
 
   const $sidebar = document.getElementById('sidebar');
   const $outputArea = document.getElementById('output-area');
+  const $splitterY = document.getElementById('splitter-y');
 
   makeSplitter(document.getElementById('splitter-x'), {
     key: 'py_w_sidebar', vertical: true, sign: 1, dflt: 260, min: 140,
@@ -180,21 +186,30 @@
     maxFn:   () => Math.max(140, window.innerWidth - 320)
   });
 
-  makeSplitter(document.getElementById('splitter-y'), {
+  makeSplitter($splitterY, {
     // Dragging down must shrink the output pane, hence sign -1
     key: 'py_h_output', vertical: false, sign: -1, dflt: 240, min: 80,
     getSize: () => $outputArea.getBoundingClientRect().height,
     setSize: px => { $outputArea.style.height = px + 'px'; syncScroll(); },
-    maxFn:   () => Math.max(80, window.innerHeight - 220)
+    maxFn:   () => Math.max(80, window.innerHeight - 220),
+    skip:    () => document.body.classList.contains('output-collapsed')
   });
 
-  // === Mobile: swipe the sidebar in and out ===============================
-  // On a narrow screen the sidebar is an overlay. Swiping right from the left
-  // edge opens it, swiping left closes it. Vertical scrolling must still win,
-  // so a gesture is only claimed once it is clearly horizontal.
-  const SWIPE_MIN = 60;        // px of horizontal travel needed
-  const SWIPE_SLOP = 40;       // max vertical drift before we let scrolling win
-  const EDGE_ZONE = 40;        // px from the left edge that can start an open
+  // === Mobile gestures ====================================================
+  // On a narrow screen the sidebar is an overlay and the output area is a
+  // drawer, so the editor keeps the screen. Three gestures drive them:
+  //
+  //   swipe right  -> open our sidebar; if it is already open, the gesture
+  //                   belongs to the parent page's dock (forwarded)
+  //   swipe left   -> close our sidebar first, forward only once it is closed
+  //   swipe up/down from the bottom edge -> show / hide the output drawer
+  //
+  // Precedence matters: this app's own panes always move before the site dock,
+  // otherwise a student swiping to reach the exercise list gets the site menu.
+  const SWIPE_MIN = 60;        // px of travel needed to count as a swipe
+  const SWIPE_SLOP = 40;       // max drift on the other axis before we let go
+  const BOTTOM_ZONE = 70;      // px above the bottom edge that starts a drawer pull
+  const OUTPUT_KEY = 'py_output_open';
 
   function isNarrow() { return window.matchMedia('(max-width: 700px)').matches; }
 
@@ -203,6 +218,49 @@
     $btnMenu.setAttribute('aria-expanded', String(open));
   }
 
+  // --- Output drawer ------------------------------------------------------
+  // Only meaningful on a phone; on a desktop the pane is always there and the
+  // class is simply never set.
+  function outputOpen() { return !document.body.classList.contains('output-collapsed'); }
+
+  function setOutputOpen(open) {
+    if (!isNarrow()) { document.body.classList.remove('output-collapsed'); return; }
+    if (open === outputOpen()) return;
+    document.body.classList.toggle('output-collapsed', !open);
+    try { localStorage.setItem(OUTPUT_KEY, open ? '1' : '0'); } catch { /* private mode */ }
+    syncScroll();
+  }
+
+  // First visit on a phone starts with the drawer shut: the editor is the point
+  // of the page, and Run/Check pull the drawer back up on their own.
+  function applyOutputDefault() {
+    if (!isNarrow()) { document.body.classList.remove('output-collapsed'); return; }
+    const saved = localStorage.getItem(OUTPUT_KEY);
+    document.body.classList.toggle('output-collapsed', saved !== '1');
+  }
+  applyOutputDefault();
+  window.addEventListener('resize', applyOutputDefault);
+
+  // Tap the handle to toggle; a real drag resizes instead (makeSplitter owns
+  // that), so remember whether the pointer actually moved before acting.
+  let handleDown = null;
+  $splitterY.addEventListener('pointerdown', ev => { handleDown = { y: ev.clientY, moved: false }; });
+  $splitterY.addEventListener('pointermove', ev => {
+    if (!handleDown) return;
+    const dy = ev.clientY - handleDown.y;
+    if (Math.abs(dy) > 8) handleDown.moved = true;
+    // While collapsed the pane is pinned to 0 by CSS, so dragging it cannot
+    // resize anything. Pulling up is then plainly a request to open it.
+    if (isNarrow() && !outputOpen() && dy < -20) setOutputOpen(true);
+  });
+  $splitterY.addEventListener('click', () => {
+    if (!isNarrow()) return;
+    if (handleDown && handleDown.moved) { handleDown = null; return; }
+    handleDown = null;
+    setOutputOpen(!outputOpen());
+  });
+
+  // --- Swipes -------------------------------------------------------------
   let touchStart = null;
   // When this page is embedded in the site, a gesture it has nothing left to do
   // with belongs to the parent, which uses it to reveal its own left bars. A
@@ -216,7 +274,7 @@
   document.addEventListener('touchstart', e => {
     if (e.touches.length !== 1) { touchStart = null; return; }
     const t = e.touches[0];
-    touchStart = { x: t.clientX, y: t.clientY };
+    touchStart = { x: t.clientX, y: t.clientY, target: e.target };
   }, { passive: true });
 
   document.addEventListener('touchend', e => {
@@ -226,6 +284,19 @@
     const dy = t.clientY - touchStart.y;
     const start = touchStart;
     touchStart = null;
+
+    // Vertical: the output drawer, but only for a pull that starts at the
+    // bottom edge or inside the drawer itself. Everywhere else a vertical drag
+    // is scrolling — the editor's above all — and must be left alone.
+    if (Math.abs(dy) > SWIPE_MIN && Math.abs(dx) < SWIPE_SLOP) {
+      if (!isNarrow()) return;
+      const fromBottom = window.innerHeight - start.y <= BOTTOM_ZONE;
+      const inDrawer = $outputArea.contains(start.target) || $splitterY.contains(start.target);
+      if (dy < 0 && (fromBottom || inDrawer) && !outputOpen()) setOutputOpen(true);
+      else if (dy > 0 && inDrawer && outputOpen()) setOutputOpen(false);
+      return;
+    }
+
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
 
     // On a wide screen this page has no overlay sidebar to move, so every
@@ -234,8 +305,9 @@
 
     const open = document.body.classList.contains('sidebar-open');
     if (dx > 0) {
-      // Own sidebar first; once it is open, the gesture is the parent's
-      if (!open && start.x <= EDGE_ZONE) setSidebarOpen(true);
+      // Our own exercise pane first, from anywhere on the screen; the dock only
+      // gets the gesture once we have nothing left to reveal.
+      if (!open) setSidebarOpen(true);
       else forwardSwipe('right');
     } else {
       if (open) setSidebarOpen(false);
@@ -250,9 +322,76 @@
   const $backdrop = document.getElementById('sidebar-backdrop');
   $backdrop.addEventListener('click', () => setSidebarOpen(false));
 
-  // Picking an exercise on a phone should get out of the way
+  // Picking an exercise on a phone should get out of the way, and hand the
+  // screen back to the code.
   $list.addEventListener('click', () => { if (isNarrow()) setSidebarOpen(false); });
   window.addEventListener('resize', () => { if (!isNarrow()) setSidebarOpen(false); });
+
+  // === Zoom = code font size ==============================================
+  // The viewport is locked (see index.html), so a pinch cannot scale the page.
+  // It resizes the code instead, which is what anyone pinching a code editor
+  // on a phone actually wants. Ctrl+wheel does the same with a mouse.
+  const FONT_KEY = 'py_code_font';
+  const FONT_MIN = 9;
+  const FONT_MAX = 34;
+  const FONT_DFLT = 14;
+  const $zoomBadge = document.getElementById('zoom-badge');
+  let badgeTimer = null;
+
+  let codeFont = parseFloat(localStorage.getItem(FONT_KEY));
+  if (isNaN(codeFont)) codeFont = FONT_DFLT;
+
+  function setCodeFont(px, announce) {
+    codeFont = Math.max(FONT_MIN, Math.min(FONT_MAX, px));
+    document.documentElement.style.setProperty('--code-font', codeFont.toFixed(1) + 'px');
+    try { localStorage.setItem(FONT_KEY, String(codeFont)); } catch { /* private mode */ }
+    syncScroll();
+    if (!announce) return;
+    $zoomBadge.textContent = Math.round(codeFont) + ' px';
+    $zoomBadge.classList.remove('hidden');
+    clearTimeout(badgeTimer);
+    badgeTimer = setTimeout(() => $zoomBadge.classList.add('hidden'), 700);
+  }
+  setCodeFont(codeFont, false);
+
+  function pinchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  let pinch = null;
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) { pinch = null; return; }
+    touchStart = null;                     // a two-finger gesture is never a swipe
+    pinch = { dist: pinchDistance(e.touches), font: codeFont };
+  }, { passive: true });
+
+  // Not passive: a two-finger drag is ours, and on browsers that still offer
+  // page zoom despite the viewport meta this is what stops it.
+  document.addEventListener('touchmove', e => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const dist = pinchDistance(e.touches);
+    if (pinch.dist < 1) return;
+    setCodeFont(pinch.font * (dist / pinch.dist), true);
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => { if (pinch) pinch = null; }, { passive: true });
+
+  document.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setCodeFont(codeFont + (e.deltaY < 0 ? 1 : -1), true);
+  }, { passive: false });
+
+  // Ctrl+/Ctrl-/Ctrl+0, the shortcuts a browser would have handled
+  document.addEventListener('keydown', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); setCodeFont(codeFont + 1, true); }
+    else if (e.key === '-') { e.preventDefault(); setCodeFont(codeFont - 1, true); }
+    else if (e.key === '0') { e.preventDefault(); setCodeFont(FONT_DFLT, true); }
+  });
 
   // === Tabs ===
   const $tabs = [...document.querySelectorAll('#output-tabs .tab')];
@@ -452,7 +591,15 @@
       switchTab('tests');
       return;
     }
-    const code = $editor.value + '\n' + currentExercise._parsed.tests;
+    // The tests are handed the student's own source as well as their function,
+    // so an exercise can refuse a construct it bans -- `max(`, `[::-1]`,
+    // `.split(` -- which no assertion on a return value could ever catch.
+    // Appended *after* their code, never before, so a traceback still points at
+    // the line they wrote. JSON.stringify emits a valid Python string literal.
+    const source = $editor.value;
+    const code = source
+      + '\n__student_code__ = ' + JSON.stringify(source)
+      + '\n' + currentExercise._parsed.tests;
     $testsOutput.textContent = 'Checking...\n';
     switchTab('tests');
 
@@ -520,6 +667,8 @@
   }
 
   function switchTab(name) {
+    // A pane nobody can see is useless: asking for one opens the phone drawer.
+    setOutputOpen(true);
     document.querySelectorAll('#output-tabs .tab').forEach(b => {
       const on = b.dataset.tab === name;
       b.classList.toggle('active', on);
