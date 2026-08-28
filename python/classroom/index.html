@@ -76,11 +76,11 @@
       <div id="console-input-line">
         <span class="prompt" id="console-prompt">&gt;&gt;&gt;&nbsp;</span>
         <!-- textarea, not input: multi-line blocks (def/for/if...) are editable.
-             Enter submits a complete statement, Shift+Enter forces a new line,
-             and an unfinished block auto-continues with indentation. -->
+             Enter opens a new line with Python-aware indentation;
+             Shift+Enter (or Ctrl+Enter) runs the block. -->
         <textarea id="console-input" rows="1" spellcheck="false" autocomplete="off"
                   autocapitalize="off" wrap="off"
-                  placeholder="Python — Enter to run, Shift+Enter for a new line"></textarea>
+                  placeholder="Python — Shift+Enter to run, Enter for a new line"></textarea>
       </div>
     </div>
   </div>

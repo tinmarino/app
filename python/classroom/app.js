@@ -57,6 +57,159 @@
   const $loginCancel = document.getElementById('login-cancel');
   const $loginError = document.getElementById('login-error');
 
+  // === Python output / traceback colouring ================================
+  // Prism has no traceback grammar, so mark up the few line shapes CPython
+  // emits and hand the embedded source lines to the python grammar.
+  function esc(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function highlightPy(code) {
+    if (window.Prism && Prism.languages.python) {
+      return Prism.highlight(code, Prism.languages.python, 'python');
+    }
+    return esc(code);
+  }
+
+  function renderPyLine(line) {
+    let m;
+
+    // Our own banners
+    if ((m = line.match(/^--- (ALL TESTS PASSED|.*?) ---$/))) {
+      const ok = /ALL TESTS PASSED/.test(line);
+      return '<span class="tb-banner ' + (ok ? 'tb-ok' : 'tb-bad') + '">' + esc(line) + '</span>';
+    }
+
+    // Traceback (most recent call last):
+    if (/^Traceback \(most recent call last\):/.test(line)) {
+      return '<span class="tb-head">' + esc(line) + '</span>';
+    }
+
+    //   File "/path/to.py", line 12, in func
+    if ((m = line.match(/^(\s*)File "(.*?)", line (\d+)(?:, in (.*))?$/))) {
+      return m[1] + '<span class="tb-kw">File </span>'
+        + '<span class="tb-file">"' + esc(m[2]) + '"</span>'
+        + '<span class="tb-kw">, line </span><span class="tb-line">' + m[3] + '</span>'
+        + (m[4] ? '<span class="tb-kw">, in </span><span class="tb-func">' + esc(m[4]) + '</span>' : '');
+    }
+
+    // Caret / squiggle markers under the offending expression
+    if (/^\s*[\^~]+\s*$/.test(line) || /^\s*[~\^]{2,}[~\^\s]*$/.test(line)) {
+      return '<span class="tb-caret">' + esc(line) + '</span>';
+    }
+
+    // ...<5 lines>...  (CPython 3.13+ elision)
+    if (/^\s*\.\.\..*\.\.\.\s*$/.test(line)) {
+      return '<span class="tb-head">' + esc(line) + '</span>';
+    }
+
+    // ExceptionName: message   (at column 0, this is the final line)
+    if ((m = line.match(/^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Warning|Exit))(:\s?)([\s\S]*)$/))) {
+      return '<span class="tb-exc">' + esc(m[1]) + '</span>'
+        + '<span class="tb-kw">' + esc(m[2]) + '</span>'
+        + '<span class="tb-msg">' + esc(m[3]) + '</span>';
+    }
+
+    // Indented source echo -> real Python highlighting
+    if (/^\s+\S/.test(line)) {
+      const indent = line.match(/^\s*/)[0];
+      return indent + highlightPy(line.slice(indent.length));
+    }
+
+    return esc(line);
+  }
+
+  // Paint `text` into `el`. Plain program output stays plain; tracebacks get
+  // marked up line by line.
+  function renderOutput(el, text) {
+    if (!text) { el.textContent = ''; return; }
+    el.innerHTML = text.split('\n').map(renderPyLine).join('\n');
+  }
+
+  // === Python smart indentation ==========================================
+  // No small standalone library does this without dragging in a whole editor
+  // (CodeMirror / Ace / Monaco each ship their own Python mode). These are the
+  // same rules those modes apply, kept deliberately short:
+  //   - a line ending in ':'        -> indent one level deeper
+  //   - an unclosed '(', '[', '{'   -> indent one level deeper
+  //   - return/pass/break/continue/raise -> dedent one level (leaves the suite)
+  //   - otherwise                   -> keep the current indent
+  const INDENT = '    ';
+  const INDENT_N = 4;
+  const DEDENT_RE = /^\s*(return|pass|break|continue|raise)\b/;
+
+  // Blank out comments and string literals so brackets inside them don't count.
+  // Length is preserved so caller offsets stay valid.
+  function stripLiterals(src) {
+    let out = '', quote = null, i = 0;
+    while (i < src.length) {
+      const c = src[i];
+      if (quote) {
+        if (c === '\\') { out += '  '; i += 2; continue; }
+        if (src.startsWith(quote, i)) { out += ' '.repeat(quote.length); i += quote.length; quote = null; continue; }
+        out += (c === '\n' ? '\n' : ' ');
+        i++;
+        continue;
+      }
+      if (c === '#') { while (i < src.length && src[i] !== '\n') { out += ' '; i++; } continue; }
+      const triple = src.substr(i, 3);
+      if (triple === '"""' || triple === "'''") { quote = triple; out += '   '; i += 3; continue; }
+      if (c === '"' || c === "'") { quote = c; out += ' '; i++; continue; }
+      out += c;
+      i++;
+    }
+    return out;
+  }
+
+  // Net unclosed-bracket depth
+  function bracketDepth(src) {
+    let d = 0;
+    for (const c of stripLiterals(src)) {
+      if ('([{'.includes(c)) d++;
+      else if (')]}'.includes(c)) d = Math.max(0, d - 1);
+    }
+    return d;
+  }
+
+  // The indent that the line following `before` should start with
+  function indentAfter(before) {
+    const cur = before.split('\n').pop();
+    const clean = stripLiterals(before).split('\n').pop();
+    const indent = (cur.match(/^[ \t]*/) || [''])[0].replace(/\t/g, INDENT);
+
+    if (/:[ \t]*$/.test(clean)) return indent + INDENT;     // opens a suite
+    if (bracketDepth(before) > 0) return indent + INDENT;   // inside (), [], {}
+    if (DEDENT_RE.test(cur)) {                              // leaves the suite
+      return indent.slice(0, Math.max(0, indent.length - INDENT_N));
+    }
+    return indent;
+  }
+
+  // Insert a newline with smart indentation into a textarea
+  function smartNewline(el, after) {
+    const v = el.value;
+    const at = el.selectionStart;
+    const ins = '\n' + indentAfter(v.slice(0, at));
+    el.value = v.slice(0, at) + ins + v.slice(el.selectionEnd);
+    el.selectionStart = el.selectionEnd = at + ins.length;
+    if (after) after();
+  }
+
+  // Backspace at the head of an indent removes a whole level
+  function smartBackspace(el, ev, after) {
+    const at = el.selectionStart;
+    if (at !== el.selectionEnd || at === 0) return false;
+    const lineStart = el.value.lastIndexOf('\n', at - 1) + 1;
+    const before = el.value.slice(lineStart, at);
+    if (before.length === 0 || /[^ ]/.test(before)) return false;
+    const remove = before.length % INDENT_N || INDENT_N;
+    ev.preventDefault();
+    el.value = el.value.slice(0, at - remove) + el.value.slice(at);
+    el.selectionStart = el.selectionEnd = at - remove;
+    if (after) after();
+    return true;
+  }
+
   // === Syntax highlighting ===============================================
   // Repaint the <pre> underneath the transparent textarea. A trailing newline
   // is padded so the last line keeps its height and the layers stay aligned.
@@ -248,7 +401,7 @@
     if (result.stdout) out += result.stdout + '\n';
     if (result.stderr) out += result.stderr + '\n';
     if (result.error) out += '--- Error ---\n' + result.error + '\n';
-    $output.textContent = out || '(no output)\n';
+    renderOutput($output, out || '(no output)\n');
   }
 
   // === Check (run tests) ===
@@ -274,7 +427,7 @@
       localStorage.setItem(SOLVED_PREFIX + currentExercise.id, $editor.value);
       markDone(currentExercise.id);
     }
-    $testsOutput.textContent = out;
+    renderOutput($testsOutput, out);
   }
 
   // === Reset ===
@@ -300,46 +453,22 @@
     });
   }
 
-  function appendConsole(text, cls) {
+  // kind: 'code' (echoed input), 'error' (stderr/traceback), undefined (plain)
+  function appendConsole(text, cls, kind) {
     const span = document.createElement('span');
     if (cls) span.className = cls;
-    span.textContent = text + '\n';
+    if (kind === 'code') {
+      // Strip the prompt, highlight the code, put the prompt back
+      const m = text.match(/^(>>> |\.\.\. )?([\s\S]*)$/);
+      span.innerHTML = '<span class="tb-prompt">' + esc(m[1] || '') + '</span>'
+        + highlightPy(m[2]) + '\n';
+    } else if (kind === 'error') {
+      span.innerHTML = text.split('\n').map(renderPyLine).join('\n') + '\n';
+    } else {
+      span.textContent = text + '\n';
+    }
     $consoleHistory.appendChild(span);
     $consoleHistory.scrollTop = $consoleHistory.scrollHeight;
-  }
-
-  // A block is unfinished while brackets are open or the last meaningful line
-  // opens an indented suite (ends with ':'), mirroring the real REPL.
-  function isIncomplete(src) {
-    let depth = 0, quote = null;
-    for (let i = 0; i < src.length; i++) {
-      const c = src[i];
-      if (quote) {
-        if (c === '\\') { i++; continue; }
-        if (c === quote) quote = null;
-        continue;
-      }
-      if (c === '"' || c === "'") { quote = c; continue; }
-      if (c === '#') { while (i < src.length && src[i] !== '\n') i++; continue; }
-      if ('([{'.includes(c)) depth++;
-      else if (')]}'.includes(c)) depth--;
-    }
-    if (depth > 0 || quote) return true;
-
-    const lines = src.split('\n');
-    const last = lines[lines.length - 1];
-    // Inside a suite: a blank line closes it, anything indented continues it
-    if (last.trim() === '') return false;
-    if (/:\s*(#.*)?$/.test(last)) return true;
-    if (/\\$/.test(last)) return true;
-    return lines.length > 1 && /^\s+/.test(last);
-  }
-
-  // Indentation the next line should start with
-  function nextIndent(src) {
-    const last = src.split('\n').pop();
-    const base = (last.match(/^\s*/) || [''])[0];
-    return /:\s*(#.*)?$/.test(last) ? base + '    ' : base;
   }
 
   function autoGrow() {
@@ -353,14 +482,14 @@
     consoleHistoryIdx = consoleCmdHistory.length;
     // Echo like a REPL: '>>>' on the first line, '...' on continuations
     line.split('\n').forEach((l, i) => {
-      appendConsole((i === 0 ? '>>> ' : '... ') + l, i === 0 ? null : 'continuation');
+      appendConsole((i === 0 ? '>>> ' : '... ') + l, null, 'code');
     });
 
     const result = await workerMgr.runConsole(line);
     if (result.stdout) appendConsole(result.stdout);
-    if (result.result && result.result !== 'None') appendConsole(result.result);
-    if (result.stderr) appendConsole(result.stderr, 'error');
-    if (result.error) appendConsole(result.error, 'error');
+    if (result.result && result.result !== 'None') appendConsole(result.result, 'repr');
+    if (result.stderr) appendConsole(result.stderr, 'error', 'error');
+    if (result.error) appendConsole(result.error, 'error', 'error');
   }
 
   function submitConsole() {
@@ -372,13 +501,10 @@
   }
 
   function insertNewline() {
-    const v = $consoleInput.value;
-    const at = $consoleInput.selectionStart;
-    const ins = '\n' + nextIndent(v.slice(0, at));
-    $consoleInput.value = v.slice(0, at) + ins + v.slice($consoleInput.selectionEnd);
-    $consoleInput.selectionStart = $consoleInput.selectionEnd = at + ins.length;
-    $consolePrompt.innerHTML = '...&nbsp;';
-    autoGrow();
+    smartNewline($consoleInput, () => {
+      $consolePrompt.innerHTML = '...&nbsp;';
+      autoGrow();
+    });
   }
 
   $consoleInput.addEventListener('input', autoGrow);
@@ -389,24 +515,22 @@
 
     if (e.key === 'Enter') {
       e.preventDefault();
-      // Ctrl/Cmd+Enter always runs, even an unfinished block
-      if (e.ctrlKey || e.metaKey) { await submitConsole(); return; }
-      // Shift+Enter always adds a line
-      if (e.shiftKey) { insertNewline(); return; }
-      // Otherwise follow the REPL rule: keep editing while the block is open
-      if (isIncomplete(val)) { insertNewline(); return; }
-      await submitConsole();
+      // Shift+Enter (or Ctrl/Cmd+Enter) runs; plain Enter keeps editing the block
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { await submitConsole(); return; }
+      insertNewline();
       return;
     }
 
     if (e.key === 'Tab') {
       e.preventDefault();
       const at = $consoleInput.selectionStart;
-      $consoleInput.value = val.slice(0, at) + '    ' + val.slice($consoleInput.selectionEnd);
-      $consoleInput.selectionStart = $consoleInput.selectionEnd = at + 4;
+      $consoleInput.value = val.slice(0, at) + INDENT + val.slice($consoleInput.selectionEnd);
+      $consoleInput.selectionStart = $consoleInput.selectionEnd = at + INDENT_N;
       autoGrow();
       return;
     }
+
+    if (e.key === 'Backspace' && smartBackspace($consoleInput, e, autoGrow)) return;
 
     // History recall only when it cannot fight with cursor movement
     if (e.key === 'ArrowUp' && !multiline) {
@@ -702,18 +826,35 @@
   $loginCancel.addEventListener('click', hideLogin);
   $loginPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
 
-  // Ctrl+Enter to run
   $editor.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runCode(); }
-    // Tab inserts spaces
+    // Ctrl/Cmd+Enter runs
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runCode(); return; }
+
+    // Enter keeps the block's indentation
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      smartNewline($editor, saveAndRepaint);
+      return;
+    }
+
+    // Tab inserts one level
     if (e.key === 'Tab') {
       e.preventDefault();
       const start = $editor.selectionStart;
-      $editor.value = $editor.value.slice(0, start) + '    ' + $editor.value.slice($editor.selectionEnd);
-      $editor.selectionStart = $editor.selectionEnd = start + 4;
-      repaint();
+      $editor.value = $editor.value.slice(0, start) + INDENT + $editor.value.slice($editor.selectionEnd);
+      $editor.selectionStart = $editor.selectionEnd = start + INDENT_N;
+      saveAndRepaint();
+      return;
     }
+
+    // Backspace inside leading whitespace removes a whole level
+    if (e.key === 'Backspace') smartBackspace($editor, e, saveAndRepaint);
   });
+
+  function saveAndRepaint() {
+    repaint();
+    if (currentExercise) localStorage.setItem(CODE_PREFIX + currentExercise.id, $editor.value);
+  }
 
   // Auto-save on change
   $editor.addEventListener('input', () => {

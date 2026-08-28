@@ -183,7 +183,13 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   caret-color: var(--gb-light0);
   outline: none;
 }
-#editor::selection { background: var(--gb-dark3); }
+/* The textarea's glyphs are transparent, so an opaque selection rect would
+   hide the coloured layer underneath. Use a translucent highlight instead so
+   the Prism-painted text stays readable through the selection. */
+#editor::selection,
+#console-input::selection { background: rgba(131, 165, 152, 0.40); }
+#editor::-moz-selection,
+#console-input::-moz-selection { background: rgba(131, 165, 152, 0.40); }
 #editor-highlight:has(+ #editor:focus) { border-color: var(--gb-neutral_blue); }
 
 /* The Prism theme styles pre[class*=language-]; our wrapper must win */
@@ -382,3 +388,23 @@ body.resizing * { user-select: none !important; }
 }
 #console-prompt { line-height: 1.5; }
 #console-history .continuation { color: var(--gb-gray_245); }
+
+/* --- Python traceback / output colouring --------------------------------
+   Applied by renderOutput() in app.js to the Output, Tests and Console panes. */
+#output, #tests-output, #console-history { white-space: pre-wrap; }
+
+.tb-banner    { font-weight: bold; }
+.tb-ok        { color: var(--gb-bright_green); }
+.tb-bad       { color: var(--gb-bright_red); }
+.tb-head      { color: var(--gb-gray_245); }
+.tb-kw        { color: var(--gb-gray_245); }
+.tb-file      { color: var(--gb-neutral_blue); }
+.tb-line      { color: var(--gb-bright_yellow); }
+.tb-func      { color: var(--gb-bright_aqua); }
+.tb-caret     { color: var(--gb-bright_red); font-weight: bold; }
+.tb-exc       { color: var(--gb-bright_red); font-weight: bold; }
+.tb-msg       { color: var(--gb-bright_orange); }
+.tb-prompt    { color: var(--gb-bright_green); user-select: none; }
+
+#console-history .repr  { color: var(--gb-bright_purple); }
+#console-history .error { color: var(--gb-bright_red); }
