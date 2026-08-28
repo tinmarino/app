@@ -829,9 +829,10 @@
     $btnDownload.disabled = n === 0;
     const creds = getCreds();
     const who = creds ? ' Logged in as ' + (creds.username || 'anonymous') + '.' : '';
-    $syncStatus.textContent = n
+    const base = n
       ? n + ' of ' + exercises.length + ' completed, saved in this browser.' + who
       : 'Progress is saved in this browser.' + who;
+    $syncStatus.textContent = syncNote ? base + ' ' + syncNote : base;
   }
 
   // ===============================
@@ -925,22 +926,24 @@
     return JSON.parse(new TextDecoder().decode(plain));
   }
 
-  // S3 PutObject with SigV4 (minimal implementation)
-  async function s3Put(creds, key, body) {
+  // Signed S3 request with SigV4 (minimal implementation).
+  // method: 'PUT' or 'GET'. For GET, body is '' and the payload hash is the
+  // hash of the empty string, which is what S3 expects.
+  async function s3Request(creds, method, key, body) {
     const host = S3_BUCKET + '.s3.' + S3_REGION + '.amazonaws.com';
     const url = 'https://' + host + '/' + key;
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]/g, '').replace(/\.\d+/, '');
     const dateStamp = amzDate.slice(0, 8);
 
-    const payloadHash = await sha256hex(body);
+    const payloadHash = await sha256hex(method === 'GET' ? '' : body);
 
     const headers = {
       'Host': host,
       'x-amz-date': amzDate,
       'x-amz-content-sha256': payloadHash,
-      'Content-Type': 'application/json',
     };
+    if (method !== 'GET') headers['Content-Type'] = 'application/json';
 
     const signedHeaderKeys = Object.keys(headers).map(k => k.toLowerCase()).sort();
     const signedHeaders = signedHeaderKeys.join(';');
@@ -956,7 +959,7 @@
     // C3 fix: URI-encode path segments for valid canonical request
     const canonicalUri = '/' + key.split('/').map(encodeURIComponent).join('/');
     const canonicalRequest = [
-      'PUT', canonicalUri, '',
+      method, canonicalUri, '',
       canonicalHeadersStr,
       signedHeaders,
       payloadHash
@@ -977,10 +980,27 @@
       ', SignedHeaders=' + signedHeaders + ', Signature=' + signature;
 
     const fetchHeaders = { ...headers, 'Authorization': authHeader };
+    delete fetchHeaders.Host;   // the browser sets Host itself and forbids it here
 
-    const resp = await fetch(url, { method: 'PUT', headers: fetchHeaders, body });
+    return fetch(url, {
+      method,
+      headers: fetchHeaders,
+      body: method === 'GET' ? undefined : body
+    });
+  }
+
+  async function s3Put(creds, key, body) {
+    const resp = await s3Request(creds, 'PUT', key, body);
     if (!resp.ok) throw new Error('S3 PUT failed: ' + resp.status + ' ' + await resp.text());
     return true;
+  }
+
+  // Returns the parsed object, or null when the student has never submitted.
+  async function s3GetJson(creds, key) {
+    const resp = await s3Request(creds, 'GET', key, '');
+    if (resp.status === 404 || resp.status === 403) return null;
+    if (!resp.ok) throw new Error('S3 GET failed: ' + resp.status + ' ' + await resp.text());
+    return resp.json();
   }
 
   async function sha256hex(msg) {
@@ -1008,6 +1028,67 @@
     return k;
   }
 
+  function progressKey(creds) {
+    return 'progress/' + (creds.username || 'anonymous') + '.json';
+  }
+
+  // === Pull progress =====================================================
+  // Logging in is meant to bring your work back: localStorage is per origin and
+  // per browser, so without this the green checks and the saved scripts only
+  // ever exist on the machine where they were written.
+  //
+  // Merge policy: the done list is a union (a pass is a pass, wherever it
+  // happened) and remote code only fills gaps. Local edits are never clobbered,
+  // because the student may be halfway through an exercise right now.
+  async function pullProgress(creds, announce) {
+    const remote = await s3GetJson(creds, progressKey(creds));
+    if (!remote) {
+      if (announce) setSyncNote('Nothing submitted yet for ' + (creds.username || 'anonymous') + '.');
+      return { restored: 0, marked: 0, found: false };
+    }
+
+    let restored = 0;
+    const localDone = getDoneList();
+    const merged = [...new Set([...localDone, ...(remote.done || [])])];
+    const marked = merged.length - localDone.length;
+    localStorage.setItem(DONE_KEY, JSON.stringify(merged));
+
+    Object.entries(remote.solved || {}).forEach(([id, code]) => {
+      if (!localStorage.getItem(SOLVED_PREFIX + id)) {
+        localStorage.setItem(SOLVED_PREFIX + id, code);
+        restored++;
+      }
+    });
+    Object.entries(remote.exercises || {}).forEach(([id, code]) => {
+      if (!localStorage.getItem(CODE_PREFIX + id)) {
+        localStorage.setItem(CODE_PREFIX + id, code);
+      }
+    });
+
+    renderExerciseList();
+    refreshStatus();
+    // If the open exercise just gained code, show it instead of the template
+    if (currentExercise && currentExercise._parsed) {
+      const saved = localStorage.getItem(CODE_PREFIX + currentExercise.id);
+      if (saved && $editor.value === currentExercise._parsed.template) {
+        $editor.value = saved;
+        repaint();
+      }
+    }
+    if (announce) {
+      setSyncNote('Restored from your submission of ' +
+        (remote.savedAt ? remote.savedAt.slice(0, 16).replace('T', ' ') : 'an earlier session') +
+        ': ' + merged.length + ' completed, ' + restored + ' script(s).');
+    }
+    return { restored, marked, found: true };
+  }
+
+  let syncNote = '';
+  function setSyncNote(text) {
+    syncNote = text;
+    refreshStatus();
+  }
+
   // === Push progress ===
   async function pushProgress() {
     const creds = getCreds();
@@ -1026,8 +1107,9 @@
     });
     progress.markdown = buildMarkdown();
 
-    const username = creds.username || 'anonymous';
-    const key = 'progress/' + username + '.json';
+    const key = progressKey(creds);
+    progress.savedAt = new Date().toISOString();
+    progress.username = creds.username || 'anonymous';
     const body = JSON.stringify(progress, null, 2);
 
     try {
@@ -1054,8 +1136,17 @@
 
     try {
       const awsCreds = await decryptCreds(pass, user);
-      setCreds({ ...awsCreds, username: user });
+      const creds = { ...awsCreds, username: user };
+      setCreds(creds);
       hideLogin();
+      // The point of logging in is getting your work back
+      $loginError.textContent = '';
+      try {
+        await pullProgress(creds, true);
+      } catch (err) {
+        setSyncNote('Could not read your submission: ' + err.message);
+        console.error(err);
+      }
     } catch (e) {
       // Distinguish "submitting is not set up here" from "wrong password"
       $loginError.textContent = /not found/i.test(e.message)
@@ -1174,7 +1265,33 @@
   // === Boot ===
   repaint();
   loadHistory();
+  migrateLegacyKeys();
   initWorker();
-  loadManifest().then(refreshStatus);
+  loadManifest().then(async () => {
+    refreshStatus();
+    // Already logged in from a previous visit: bring the work back quietly
+    const creds = getCreds();
+    if (!creds) return;
+    try { await pullProgress(creds, false); }
+    catch (err) { console.error('Could not restore progress:', err); }
+  });
+
+  // Progress used to be stored under un-namespaced keys (py_ex_ex01, py_done).
+  // Move anything left over so nobody loses local work to the rename.
+  function migrateLegacyKeys() {
+    try {
+      if (localStorage.getItem('py_done') && !localStorage.getItem(DONE_KEY)) {
+        localStorage.setItem(DONE_KEY, localStorage.getItem('py_done'));
+      }
+      Object.keys(localStorage).forEach(key => {
+        const match = key.match(/^py_(ex|solved|run)_(ex\d+)$/);
+        if (!match) return;
+        const target = { ex: CODE_PREFIX, solved: SOLVED_PREFIX, run: RUN_PREFIX }[match[1]] + match[2];
+        if (!localStorage.getItem(target)) localStorage.setItem(target, localStorage.getItem(key));
+      });
+    } catch (err) {
+      console.warn('Legacy key migration skipped:', err);
+    }
+  }
 
 })();

@@ -1,1 +1,11 @@
 donotgit/
+
+# Teacher-only tooling. No secrets in it (the Cognito pool id and the bucket
+# name are public identifiers that app.js exposes anyway), but it documents the
+# setup and is of no use to a visitor. NOTE: gitignored means unbacked-up, so
+# keep a copy somewhere if this machine dies.
+python/classroom/admin/
+
+# Superseded by Cognito: this held real AWS credentials encrypted under the
+# shared class password. Never commit it again.
+python/classroom/aws-config.enc.json
