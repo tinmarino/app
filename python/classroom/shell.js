@@ -20,15 +20,11 @@
   const HISTORY_KEY = 'ipyodide_history';
   const HISTORY_MAX = 300;
 
-  const $screen = document.getElementById('screen');
-  const $input  = document.getElementById('input');
-  const $prompt = document.getElementById('prompt');
-  const $status = document.getElementById('status');
-  const $form   = document.getElementById('prompt-line');
-  const $btnStop = document.getElementById('btn-stop');
-  const $btnClear = document.getElementById('btn-clear');
-  const $btnHelp = document.getElementById('btn-help');
-  const $keyrow = document.getElementById('keyrow');
+  const $terminal = document.getElementById('terminal');
+  const $screen   = document.getElementById('output');
+  const $input    = document.getElementById('input');
+  const $prompt   = document.getElementById('prompt');
+  const $keyrow   = document.getElementById('keyrow');
 
   let workerMgr = null;
   let busy = false;
@@ -49,16 +45,22 @@
       span.textContent = text;
     }
     $screen.appendChild(span);
-    $screen.scrollTop = $screen.scrollHeight;
+    scrollToBottom();
     return span;
   }
 
-  function setStatus(text) { $status.textContent = text; }
+  // The prompt lives at the end of the same scrolling box as the output, so
+  // "scroll to the bottom" is a property of the terminal, not of the output.
+  function scrollToBottom() {
+    $terminal.scrollTop = $terminal.scrollHeight;
+  }
+
   function setPrompt(cont) { $prompt.textContent = cont ? '...' : '>>>'; }
 
   function autoGrow() {
     $input.style.height = 'auto';
-    $input.style.height = Math.min($input.scrollHeight, window.innerHeight * 0.4) + 'px';
+    $input.style.height = $input.scrollHeight + 'px';
+    scrollToBottom();
   }
   function setInput(value) {
     $input.value = value;
@@ -92,7 +94,7 @@
 
   // ---------------------------------------------------------------- help
   const HELP_TEXT = [
-    'IPyodide — Python ' + (workerMgr && workerMgr.banner ? '' : '') + 'in your browser',
+    'IPyodide — Python in your browser. One pane, one prompt, no server.',
     '',
     'Keys',
     '  Enter              run the block (a line ending in ":" opens a new line instead)',
@@ -103,6 +105,7 @@
     '  Ctrl+Up / Down     browse history directly',
     '  Backspace          delete a whole indent level inside leading whitespace',
     '  Ctrl+U             clear the input     Ctrl+L  clear the screen',
+    '  Ctrl+C             stop and restart Python (the only escape from a hang)',
     '',
     'Magics',
     '  !help  %help  ?    this message',
@@ -111,6 +114,8 @@
     '  %time <expr>       time one evaluation',
     '  %timeit <expr>     time it repeatedly, report the best run',
     '  %reset             forget every name and start fresh',
+    '  %stop  %restart    restart the Python runtime',
+    '  %exercises         go to the guided Python exercises',
     '  <obj>?             show help(<obj>)',
     '',
     'On a phone the extra key row above the keyboard types the characters Python',
@@ -125,6 +130,12 @@
     const line = src.trim();
     if (line === '?' || line === '!help' || line === '%help') { append(HELP_TEXT, 'help'); return ''; }
     if (line === '%clear' || line === '!clear') { $screen.innerHTML = ''; return ''; }
+    if (line === '%stop' || line === '%restart') { restart(); return ''; }
+    if (line === '%exercises' || line === '!exercises') {
+      // Navigate the whole tab, or just this frame when embedded in the site
+      window.location.href = '/class/python-exercices/';
+      return '';
+    }
     if (line === '%reset') {
       busy = true;
       workerMgr.resetNamespace()
@@ -156,7 +167,11 @@
 
   // ---------------------------------------------------------------- submit
   async function submit(force) {
-    if (busy) { append('Python is still busy. Press the stop button to restart it.', 'error'); return; }
+    if (busy) {
+      append('Python is still busy running your last command. '
+           + 'Press Ctrl+C (or type %stop) to restart it.', 'error');
+      return;
+    }
     const src = $input.value;
     if (!src.trim()) { setInput(''); return; }
 
@@ -174,16 +189,13 @@
 
     let res;
     busy = true;
-    setStatus('running…');
     try {
       res = await workerMgr.runConsole(magic === null ? src : magic);
     } catch (err) {
       append((err && err.message) || String(err), 'error');
-      if (err && err.busy) $btnStop.classList.add('urgent');
       return;
     } finally {
       busy = false;
-      setStatus('ready');
     }
 
     if (res.status === 'incomplete' && !force) {
@@ -281,14 +293,16 @@
       if (e.ctrlKey || caretLine() === lineCount() - 1) { e.preventDefault(); historyNext(); }
       return;
     }
+    if (e.ctrlKey && e.key === 'c' && !window.getSelection().toString()) {
+      // Only when nothing is selected, so Ctrl+C still copies
+      e.preventDefault();
+      restart();
+      return;
+    }
     if (e.ctrlKey && e.key === 'l') { e.preventDefault(); $screen.innerHTML = ''; return; }
     if (e.ctrlKey && e.key === 'u') { e.preventDefault(); setInput(''); return; }
   });
 
-  $form.addEventListener('submit', e => { e.preventDefault(); submit(false); });
-  $btnClear.addEventListener('click', () => { $screen.innerHTML = ''; $input.focus(); });
-  $btnHelp.addEventListener('click', () => { append(HELP_TEXT, 'help'); $input.focus(); });
-  $btnStop.addEventListener('click', restart);
 
   // The extra key row: insert a character, or act as history arrows
   $keyrow.addEventListener('click', e => {
@@ -307,39 +321,70 @@
     $input.focus();
   });
 
-  // Tapping the scrollback focuses the input, the way a terminal behaves —
-  // but not when the user is selecting text to copy.
-  $screen.addEventListener('click', () => {
+  // One pane, one focus: clicking anywhere in the terminal types into it,
+  // the way a real console behaves. Except while selecting text to copy.
+  $terminal.addEventListener('click', () => {
     const selection = window.getSelection();
     if (selection && String(selection).length) return;
     $input.focus();
   });
+  // A keystroke anywhere on the page belongs to the prompt
+  document.addEventListener('keydown', e => {
+    if (e.target === $input) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key.length !== 1 && e.key !== 'Backspace' && e.key !== 'Enter') return;
+    $input.focus();
+  });
+
+  // ---------------------------------------------------------------- swipe
+  // The shell has no sidebar of its own, so every horizontal swipe belongs to
+  // the site around it: it is how the left bars are revealed when this page
+  // fills the frame. A cross-origin parent cannot read these events itself.
+  const SWIPE_MIN = 60, SWIPE_SLOP = 40;
+  let touchStart = null;
+
+  document.addEventListener('touchstart', e => {
+    touchStart = e.touches.length === 1
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY }
+      : null;
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (!touchStart || window.parent === window) { touchStart = null; return; }
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    touchStart = null;
+    if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
+    try {
+      window.parent.postMessage(
+        { type: 'tinmarino-swipe', dir: dx > 0 ? 'right' : 'left' }, '*');
+    } catch { /* nothing we can do */ }
+  }, { passive: true });
 
   // ---------------------------------------------------------------- runtime
   function boot() {
     workerMgr = new PyodideWorkerManager(PYODIDE_URL, WORKER_URL);
     workerMgr.init();
-    setStatus('downloading Python…');
+    const loading = append('Downloading Python…', 'notice');
     workerMgr.readyPromise.then(() => {
-      setStatus('ready');
+      loading.remove();
       append((workerMgr.banner || 'Python ready') + '\nType !help for the keys and magics.', 'help');
       $input.focus();
     }).catch(err => {
-      setStatus('failed');
+      loading.remove();
       append('Python failed to load: ' + err.message + '\nReload the page to try again.', 'error');
     });
   }
 
   function restart() {
     workerMgr.terminate();
-    $btnStop.classList.remove('urgent');
     busy = false;
-    append('Runtime stopped. Restarting…', 'help');
-    setStatus('restarting…');
+    append('^C  runtime stopped, restarting…', 'notice');
     workerMgr.init();
     workerMgr.readyPromise
-      .then(() => { setStatus('ready'); append('Python ready. Your names were cleared.', 'help'); })
-      .catch(err => { setStatus('failed'); append('Restart failed: ' + err.message, 'error'); });
+      .then(() => append('Python ready. Your names were cleared.', 'help'))
+      .catch(err => append('Restart failed: ' + err.message, 'error'));
     $input.focus();
   }
 

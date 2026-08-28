@@ -204,23 +204,43 @@
   }
 
   let touchStart = null;
+  // When this page is embedded in the site, a gesture it has nothing left to do
+  // with belongs to the parent, which uses it to reveal its own left bars. A
+  // cross-origin parent cannot read this frame's touch events, so forward them.
+  function forwardSwipe(dir) {
+    if (window.parent === window) return;
+    try { window.parent.postMessage({ type: 'tinmarino-swipe', dir: dir }, '*'); }
+    catch { /* nothing we can do */ }
+  }
+
   document.addEventListener('touchstart', e => {
-    if (!isNarrow() || e.touches.length !== 1) { touchStart = null; return; }
+    if (e.touches.length !== 1) { touchStart = null; return; }
     const t = e.touches[0];
     touchStart = { x: t.clientX, y: t.clientY };
   }, { passive: true });
 
   document.addEventListener('touchend', e => {
-    if (!touchStart || !isNarrow()) return;
+    if (!touchStart) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.x;
     const dy = t.clientY - touchStart.y;
     const start = touchStart;
     touchStart = null;
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
+
+    // On a wide screen this page has no overlay sidebar to move, so every
+    // horizontal swipe is the parent's business.
+    if (!isNarrow()) { forwardSwipe(dx > 0 ? 'right' : 'left'); return; }
+
     const open = document.body.classList.contains('sidebar-open');
-    if (dx > 0 && !open && start.x <= EDGE_ZONE) setSidebarOpen(true);
-    else if (dx < 0 && open) setSidebarOpen(false);
+    if (dx > 0) {
+      // Own sidebar first; once it is open, the gesture is the parent's
+      if (!open && start.x <= EDGE_ZONE) setSidebarOpen(true);
+      else forwardSwipe('right');
+    } else {
+      if (open) setSidebarOpen(false);
+      else forwardSwipe('left');
+    }
   }, { passive: true });
 
   // Same thing for people who are not swiping
