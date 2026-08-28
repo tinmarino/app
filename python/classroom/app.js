@@ -674,7 +674,7 @@
     let res;
     consoleBusy = true;
     try {
-      res = await workerMgr.runConsole(magic === null ? src : magic);
+      res = await workerMgr.runConsole(magic === null ? src : magic, force);
     } catch (err) {
       // Without the finally below, one rejection would wedge the console shut
       appendConsole(((err && err.message) || String(err)), 'error');

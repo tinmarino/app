@@ -190,7 +190,7 @@
     let res;
     busy = true;
     try {
-      res = await workerMgr.runConsole(magic === null ? src : magic);
+      res = await workerMgr.runConsole(magic === null ? src : magic, force);
     } catch (err) {
       append((err && err.message) || String(err), 'error');
       return;

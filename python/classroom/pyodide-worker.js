@@ -63,13 +63,26 @@ def _repl_reset_json():
 def _repl_trunc(text, limit=8000):
     return text if len(text) <= limit else text[:limit] + "\\n...<truncated>"
 
-async def _repl_push_json(src):
+async def _repl_push_json(src, force=False):
     console = _repl_state["console"]
     out, err = [], []
     console.stdout_callback = out.append
     console.stderr_callback = err.append
+
+    # The caller always sends the COMPLETE source, but Console.push() appends to
+    # its own buffer and only clears it when the result is not INCOMPLETE. Left
+    # alone, an unfinished block stays in that buffer and the next, unrelated
+    # command is compiled glued to it -- which surfaces as a SyntaxError
+    # pointing at code the student already ran. Start from a clean buffer.
+    console.buffer.clear()
     fut = console.push(src)
     status = fut.syntax_check
+
+    # Ctrl+Enter means "run it now". codeop still wants the blank line that ends
+    # a suite in a real REPL, so supply it rather than silently doing nothing.
+    if status == "incomplete" and force:
+        fut = console.push("")
+        status = fut.syntax_check
 
     if status == "incomplete":
         return json.dumps({"status": "incomplete", "stdout": "", "stderr": "",
@@ -147,7 +160,7 @@ self.onmessage = async function (e) {
   if (msg.type === 'console') {
     let res;
     try {
-      res = JSON.parse(await replPush(msg.code));
+      res = JSON.parse(await replPush(msg.code, !!msg.force));
     } catch (err) {
       res = { status: 'error', stdout: '', stderr: '', repr: null, error: String(err) };
     }

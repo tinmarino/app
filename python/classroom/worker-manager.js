@@ -112,9 +112,11 @@ class PyodideWorkerManager {
 
   // Push a block into pyodide.console.Console.
   // Resolves { status: 'ok'|'incomplete'|'error', stdout, stderr, repr, error }
-  async runConsole(code) {
+  // force: answer an unfinished block with the blank line that ends a suite,
+  // instead of reporting "incomplete" and doing nothing (Ctrl+Enter).
+  async runConsole(code, force) {
     await this.readyPromise;
-    return this._enqueue('console', { code });
+    return this._enqueue('console', { code, force: !!force });
   }
 
   // rlcompleter-backed tab completion -> { matches, start }
