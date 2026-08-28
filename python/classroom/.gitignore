@@ -1,0 +1,5 @@
+# Never commit AWS credentials or encrypted config with secrets
+aws-config.enc.json
+*.secret
+*.key
+node_modules/
