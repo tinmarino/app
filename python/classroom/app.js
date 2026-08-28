@@ -5,14 +5,25 @@
   'use strict';
 
   // === Configuration ===
-  // C1 fix: absolute URL so Blob-based worker can importScripts correctly
-  const PYODIDE_URL = new URL('vendor/pyodide/314.0.6/pyodide/pyodide.js', location.href).href;
-  const EXERCISES_BASE = '/class/python-exercices';
+  // Vendored Pyodide lives next to this file (same origin, no CORS)
+  // NOTE: the 3.14 build dropped classic-worker support -> use the ESM entry point
+  const PYODIDE_URL = new URL('vendor/pyodide/314.0.6/pyodide/pyodide.mjs', location.href).href;
+  // Worker file — must be a real URL (not a Blob) so relative imports resolve
+  const WORKER_URL  = new URL('pyodide-worker.js', location.href).href;
+  // Exercise content lives in the Page repo (custom class content), not here.
+  // Override with ?ex=<base-url> (e.g. ?ex=http://localhost:8002/class/python-exercices)
+  // Same origin as this app (www.tinmarino.com serves both / and /app/)
+  const EXERCISES_DEFAULT = '/class/python-exercices';
+  const EXERCISES_BASE = (new URLSearchParams(location.search).get('ex') || EXERCISES_DEFAULT)
+    .replace(/\/$/, '');
   const MANIFEST_URL = EXERCISES_BASE + '/manifest.json';
-  // C2 fix: S3 bucket names must be lowercase
+  // S3 bucket (lowercase required)
   const S3_BUCKET = 'python-exercices';
   const S3_REGION = 'us-east-1';
   const COOKIE_KEY = 'py_classroom_creds';
+  // localStorage keys: current editor buffer, and the last code that passed the tests
+  const CODE_PREFIX   = 'py_ex_';
+  const SOLVED_PREFIX = 'py_solved_';
 
   // === State ===
   let exercises = [];
@@ -24,22 +35,118 @@
   const $list = document.getElementById('exercise-list');
   const $title = document.getElementById('exercise-title');
   const $editor = document.getElementById('editor');
+  const $highlightPre = document.getElementById('editor-highlight');
+  const $highlight = $highlightPre.querySelector('code');
   const $output = document.getElementById('output');
   const $testsOutput = document.getElementById('tests-output');
   const $consoleHistory = document.getElementById('console-history');
   const $consoleInput = document.getElementById('console-input');
+  const $consolePrompt = document.getElementById('console-prompt');
   const $btnRun = document.getElementById('btn-run');
   const $btnCheck = document.getElementById('btn-check');
   const $btnReset = document.getElementById('btn-reset');
   const $btnConsole = document.getElementById('btn-console');
   const $btnLogin = document.getElementById('btn-login');
   const $btnPush = document.getElementById('btn-push');
+  const $btnDownload = document.getElementById('btn-download');
+  const $syncStatus = document.getElementById('sync-status');
   const $loginModal = document.getElementById('login-modal');
   const $loginUser = document.getElementById('login-user');
   const $loginPass = document.getElementById('login-pass');
   const $loginOk = document.getElementById('login-ok');
   const $loginCancel = document.getElementById('login-cancel');
   const $loginError = document.getElementById('login-error');
+
+  // === Syntax highlighting ===============================================
+  // Repaint the <pre> underneath the transparent textarea. A trailing newline
+  // is padded so the last line keeps its height and the layers stay aligned.
+  function repaint() {
+    const code = $editor.value;
+    if (window.Prism && Prism.languages.python) {
+      $highlight.innerHTML = Prism.highlight(code + '\n', Prism.languages.python, 'python');
+    } else {
+      $highlight.textContent = code + '\n';   // graceful fallback: plain text
+    }
+    syncScroll();
+  }
+  function syncScroll() {
+    $highlightPre.scrollTop  = $editor.scrollTop;
+    $highlightPre.scrollLeft = $editor.scrollLeft;
+  }
+  $editor.addEventListener('scroll', syncScroll);
+  if (!window.Prism) {
+    // Prism failed to load: show the text instead of an invisible textarea
+    $editor.style.color = 'var(--gb-light0)';
+  }
+
+  // === Draggable splitters ===============================================
+  // Generic pointer-drag resizer. `apply(px)` writes the new size, and the
+  // result is clamped so neither pane can be dragged out of existence.
+  function makeSplitter(handle, opts) {
+    const { key, vertical, getSize, setSize, min, maxFn, dflt } = opts;
+
+    const saved = parseFloat(localStorage.getItem(key));
+    if (!isNaN(saved)) setSize(clamp(saved));
+
+    function clamp(px) { return Math.max(min, Math.min(px, maxFn())); }
+
+    handle.addEventListener('pointerdown', ev => {
+      ev.preventDefault();
+      const start    = vertical ? ev.clientX : ev.clientY;
+      const startPx  = getSize();
+      handle.setPointerCapture(ev.pointerId);
+      handle.classList.add('dragging');
+      document.body.classList.add('resizing');
+
+      const onMove = e => {
+        const delta = (vertical ? e.clientX : e.clientY) - start;
+        setSize(clamp(startPx + delta * opts.sign));
+      };
+      const onUp = () => {
+        handle.releasePointerCapture(ev.pointerId);
+        handle.classList.remove('dragging');
+        document.body.classList.remove('resizing');
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        localStorage.setItem(key, String(getSize()));
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+    });
+
+    // Double-click resets, arrows nudge when focused (keyboard accessible)
+    handle.addEventListener('dblclick', () => {
+      setSize(dflt);
+      localStorage.setItem(key, String(dflt));
+    });
+    handle.addEventListener('keydown', e => {
+      const dec = vertical ? 'ArrowLeft' : 'ArrowUp';
+      const inc = vertical ? 'ArrowRight' : 'ArrowDown';
+      if (e.key !== dec && e.key !== inc) return;
+      e.preventDefault();
+      const step = (e.key === inc ? 1 : -1) * (e.shiftKey ? 40 : 10) * opts.sign;
+      setSize(clamp(getSize() + step));
+      localStorage.setItem(key, String(getSize()));
+    });
+  }
+
+  const $sidebar = document.getElementById('sidebar');
+  const $outputArea = document.getElementById('output-area');
+
+  makeSplitter(document.getElementById('splitter-x'), {
+    key: 'py_w_sidebar', vertical: true, sign: 1, dflt: 260, min: 140,
+    getSize: () => $sidebar.getBoundingClientRect().width,
+    setSize: px => { $sidebar.style.width = px + 'px'; },
+    maxFn:   () => Math.max(140, window.innerWidth - 320)
+  });
+
+  makeSplitter(document.getElementById('splitter-y'), {
+    // Dragging down must shrink the output pane, hence sign -1
+    key: 'py_h_output', vertical: false, sign: -1, dflt: 240, min: 80,
+    getSize: () => $outputArea.getBoundingClientRect().height,
+    setSize: px => { $outputArea.style.height = px + 'px'; syncScroll(); },
+    maxFn:   () => Math.max(80, window.innerHeight - 220)
+  });
 
   // === Tabs ===
   document.querySelectorAll('#output-tabs .tab').forEach(btn => {
@@ -53,10 +160,12 @@
 
   // === Init Pyodide Worker ===
   function initWorker() {
-    workerMgr = new PyodideWorkerManager(PYODIDE_URL);
+    workerMgr = new PyodideWorkerManager(PYODIDE_URL, WORKER_URL);
     workerMgr.init();
     workerMgr.readyPromise.then(() => {
-      $output.textContent = 'Python ready.\n';
+      $output.textContent = 'Python ready. Click an exercise to start.\n';
+    }).catch(err => {
+      $output.textContent = 'Python failed to load: ' + err + '\n';
     });
   }
 
@@ -68,6 +177,7 @@
     } catch (e) {
       exercises = [];
       console.error('Cannot load exercise manifest:', e);
+      $syncStatus.textContent = 'Could not load the exercise list from ' + EXERCISES_BASE;
     }
     renderExerciseList();
   }
@@ -98,10 +208,12 @@
       currentExercise._parsed = parsed;
 
       // Load saved code or template
-      const saved = localStorage.getItem('py_ex_' + currentExercise.id);
+      const saved = localStorage.getItem(CODE_PREFIX + currentExercise.id);
       $editor.value = saved || parsed.template;
+      repaint();
     } catch (e) {
       $editor.value = '# Error loading exercise\n';
+      repaint();
       console.error(e);
     }
 
@@ -127,11 +239,11 @@
   // === Run ===
   async function runCode() {
     const code = $editor.value;
-    localStorage.setItem('py_ex_' + (currentExercise ? currentExercise.id : '_scratch'), code);
+    localStorage.setItem(CODE_PREFIX + (currentExercise ? currentExercise.id : '_scratch'), code);
     $output.textContent = 'Running...\n';
     switchTab('output');
 
-    const result = await workerMgr.run(code, 'exec');
+    const result = await workerMgr.run(code);
     let out = '';
     if (result.stdout) out += result.stdout + '\n';
     if (result.stderr) out += result.stderr + '\n';
@@ -150,7 +262,7 @@
     $testsOutput.textContent = 'Checking...\n';
     switchTab('tests');
 
-    const result = await workerMgr.run(code, 'exec');
+    const result = await workerMgr.run(code);
     let out = '';
     if (result.stdout) out += result.stdout + '\n';
     if (result.stderr) out += result.stderr + '\n';
@@ -158,6 +270,8 @@
       out += '--- FAIL ---\n' + result.error + '\n';
     } else {
       out += '--- ALL TESTS PASSED ---\n';
+      // Remember the code that actually passed, so Download/Submit report real work
+      localStorage.setItem(SOLVED_PREFIX + currentExercise.id, $editor.value);
       markDone(currentExercise.id);
     }
     $testsOutput.textContent = out;
@@ -168,7 +282,9 @@
     if (!currentExercise) return;
     if (!confirm('Reset to the original template?')) return;
     $editor.value = currentExercise._parsed.template;
-    localStorage.removeItem('py_ex_' + currentExercise.id);
+    repaint();
+    localStorage.removeItem(CODE_PREFIX + currentExercise.id);
+    // The passing solution and the green check are kept on purpose
   }
 
   // === Interactive Console (REPL) ===
@@ -192,11 +308,53 @@
     $consoleHistory.scrollTop = $consoleHistory.scrollHeight;
   }
 
+  // A block is unfinished while brackets are open or the last meaningful line
+  // opens an indented suite (ends with ':'), mirroring the real REPL.
+  function isIncomplete(src) {
+    let depth = 0, quote = null;
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (quote) {
+        if (c === '\\') { i++; continue; }
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'") { quote = c; continue; }
+      if (c === '#') { while (i < src.length && src[i] !== '\n') i++; continue; }
+      if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) depth--;
+    }
+    if (depth > 0 || quote) return true;
+
+    const lines = src.split('\n');
+    const last = lines[lines.length - 1];
+    // Inside a suite: a blank line closes it, anything indented continues it
+    if (last.trim() === '') return false;
+    if (/:\s*(#.*)?$/.test(last)) return true;
+    if (/\\$/.test(last)) return true;
+    return lines.length > 1 && /^\s+/.test(last);
+  }
+
+  // Indentation the next line should start with
+  function nextIndent(src) {
+    const last = src.split('\n').pop();
+    const base = (last.match(/^\s*/) || [''])[0];
+    return /:\s*(#.*)?$/.test(last) ? base + '    ' : base;
+  }
+
+  function autoGrow() {
+    $consoleInput.style.height = 'auto';
+    $consoleInput.style.height = $consoleInput.scrollHeight + 'px';
+  }
+
   async function handleConsoleInput(line) {
     if (!line.trim()) return;
     consoleCmdHistory.push(line);
     consoleHistoryIdx = consoleCmdHistory.length;
-    appendConsole('>>> ' + line);
+    // Echo like a REPL: '>>>' on the first line, '...' on continuations
+    line.split('\n').forEach((l, i) => {
+      appendConsole((i === 0 ? '>>> ' : '... ') + l, i === 0 ? null : 'continuation');
+    });
 
     const result = await workerMgr.runConsole(line);
     if (result.stdout) appendConsole(result.stdout);
@@ -205,19 +363,60 @@
     if (result.error) appendConsole(result.error, 'error');
   }
 
+  function submitConsole() {
+    const code = $consoleInput.value;
+    $consoleInput.value = '';
+    $consolePrompt.innerHTML = '&gt;&gt;&gt;&nbsp;';
+    autoGrow();
+    return handleConsoleInput(code);
+  }
+
+  function insertNewline() {
+    const v = $consoleInput.value;
+    const at = $consoleInput.selectionStart;
+    const ins = '\n' + nextIndent(v.slice(0, at));
+    $consoleInput.value = v.slice(0, at) + ins + v.slice($consoleInput.selectionEnd);
+    $consoleInput.selectionStart = $consoleInput.selectionEnd = at + ins.length;
+    $consolePrompt.innerHTML = '...&nbsp;';
+    autoGrow();
+  }
+
+  $consoleInput.addEventListener('input', autoGrow);
+
   $consoleInput.addEventListener('keydown', async (e) => {
+    const val = $consoleInput.value;
+    const multiline = val.includes('\n');
+
     if (e.key === 'Enter') {
       e.preventDefault();
-      const line = $consoleInput.value;
-      $consoleInput.value = '';
-      await handleConsoleInput(line);
-    } else if (e.key === 'ArrowUp') {
+      // Ctrl/Cmd+Enter always runs, even an unfinished block
+      if (e.ctrlKey || e.metaKey) { await submitConsole(); return; }
+      // Shift+Enter always adds a line
+      if (e.shiftKey) { insertNewline(); return; }
+      // Otherwise follow the REPL rule: keep editing while the block is open
+      if (isIncomplete(val)) { insertNewline(); return; }
+      await submitConsole();
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const at = $consoleInput.selectionStart;
+      $consoleInput.value = val.slice(0, at) + '    ' + val.slice($consoleInput.selectionEnd);
+      $consoleInput.selectionStart = $consoleInput.selectionEnd = at + 4;
+      autoGrow();
+      return;
+    }
+
+    // History recall only when it cannot fight with cursor movement
+    if (e.key === 'ArrowUp' && !multiline) {
       e.preventDefault();
       if (consoleHistoryIdx > 0) {
         consoleHistoryIdx--;
         $consoleInput.value = consoleCmdHistory[consoleHistoryIdx];
+        autoGrow();
       }
-    } else if (e.key === 'ArrowDown') {
+    } else if (e.key === 'ArrowDown' && !multiline) {
       e.preventDefault();
       if (consoleHistoryIdx < consoleCmdHistory.length - 1) {
         consoleHistoryIdx++;
@@ -226,6 +425,7 @@
         consoleHistoryIdx = consoleCmdHistory.length;
         $consoleInput.value = '';
       }
+      autoGrow();
     }
   });
 
@@ -241,11 +441,69 @@
       localStorage.setItem('py_done', JSON.stringify(done));
       renderExerciseList();
     }
+    refreshStatus();
+  }
+
+  function getSolved(id) { return localStorage.getItem(SOLVED_PREFIX + id); }
+
+  // Exercises that were completed AND whose passing code we still have
+  function getCompleted() {
+    return exercises.filter(ex => getDoneList().includes(ex.id) && getSolved(ex.id));
+  }
+
+  // Reflect local (no-login) state in the UI
+  function refreshStatus() {
+    const n = getCompleted().length;
+    $btnDownload.disabled = n === 0;
+    const creds = getCreds();
+    const who = creds ? ' Logged in as ' + (creds.username || 'anonymous') + '.' : '';
+    $syncStatus.textContent = n
+      ? n + ' of ' + exercises.length + ' completed, saved in this browser.' + who
+      : 'Progress is saved in this browser.' + who;
+  }
+
+  // ===============================
+  // === Download as Markdown ===
+  // ===============================
+
+  function buildMarkdown() {
+    const completed = getCompleted();
+    const creds = getCreds();
+    const lines = [
+      '# Python Exercises',
+      '',
+      (creds && creds.username ? 'Student: ' + creds.username : 'Student: (not logged in)'),
+      'Date: ' + new Date().toISOString().slice(0, 10),
+      'Completed: ' + completed.length + ' of ' + exercises.length,
+      ''
+    ];
+    completed.forEach(ex => {
+      lines.push('### ' + ex.title, '', '```python', getSolved(ex.id).trimEnd(), '```', '');
+    });
+    return lines.join('\n');
+  }
+
+  function downloadMarkdown() {
+    if (!getCompleted().length) return;
+    const creds = getCreds();
+    const who = (creds && creds.username ? creds.username : 'student').replace(/[^\w.-]+/g, '_');
+    const name = 'python-exercices-' + who + '-' + new Date().toISOString().slice(0, 10) + '.md';
+    const blob = new Blob([buildMarkdown()], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ===============================
   // === AWS S3 Push / Login ===
   // ===============================
+  // Everything above works with no credentials at all. The AWS part below is
+  // strictly additive: it only submits what is already stored locally.
 
   function getCreds() {
     try {
@@ -259,6 +517,7 @@
     const val = btoa(JSON.stringify(creds));
     document.cookie = COOKIE_KEY + '=' + val + '; path=/; max-age=' + (30*86400) + '; SameSite=Strict';
     $btnPush.disabled = false;
+    refreshStatus();
   }
   function getCookie(name) {
     const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
@@ -381,12 +640,16 @@
 
     const progress = {
       done: getDoneList(),
-      exercises: {}
+      exercises: {},   // current editor buffer
+      solved: {}       // code that actually passed the tests
     };
     exercises.forEach(ex => {
-      const saved = localStorage.getItem('py_ex_' + ex.id);
+      const saved = localStorage.getItem(CODE_PREFIX + ex.id);
       if (saved) progress.exercises[ex.id] = saved;
+      const solved = getSolved(ex.id);
+      if (solved) progress.solved[ex.id] = solved;
     });
+    progress.markdown = buildMarkdown();
 
     const username = creds.username || 'anonymous';
     const key = 'progress/' + username + '.json';
@@ -419,7 +682,10 @@
       setCreds({ ...awsCreds, username: user });
       hideLogin();
     } catch (e) {
-      $loginError.textContent = 'Decryption failed. Wrong password?';
+      // Distinguish "submitting is not set up here" from "wrong password"
+      $loginError.textContent = /not found/i.test(e.message)
+        ? 'Submitting is not enabled on this server. Use Download instead.'
+        : 'Wrong password.';
       console.error(e);
     }
   }
@@ -429,6 +695,7 @@
   $btnCheck.addEventListener('click', checkCode);
   $btnReset.addEventListener('click', resetCode);
   $btnConsole.addEventListener('click', () => switchTab('console'));
+  $btnDownload.addEventListener('click', downloadMarkdown);
   $btnLogin.addEventListener('click', showLogin);
   $btnPush.addEventListener('click', pushProgress);
   $loginOk.addEventListener('click', handleLogin);
@@ -444,21 +711,25 @@
       const start = $editor.selectionStart;
       $editor.value = $editor.value.slice(0, start) + '    ' + $editor.value.slice($editor.selectionEnd);
       $editor.selectionStart = $editor.selectionEnd = start + 4;
+      repaint();
     }
   });
 
   // Auto-save on change
   $editor.addEventListener('input', () => {
+    repaint();
     if (currentExercise) {
-      localStorage.setItem('py_ex_' + currentExercise.id, $editor.value);
+      localStorage.setItem(CODE_PREFIX + currentExercise.id, $editor.value);
     }
   });
 
-  // Check stored creds on load
+  // Credentials are optional: without them everything still runs, checks,
+  // marks exercises green and downloads. Only Submit needs a login.
   if (getCreds()) $btnPush.disabled = false;
 
   // === Boot ===
+  repaint();
   initWorker();
-  loadManifest();
+  loadManifest().then(refreshStatus);
 
 })();

@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Python Exercises - Tinmarino Classroom</title>
 
-<!-- Gruvbox theme variables (same as main site) -->
+<!-- Gruvbox theme (same as main site, served from the Page repo) -->
 <link rel="stylesheet" href="/css/lib_color_dark_gruvbox.css">
 <link rel="stylesheet" href="/css/lib_color_use_custom_var.css">
-
+<link rel="stylesheet" href="/css/prism_dark_dark.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,11 +17,16 @@
 <aside id="sidebar">
   <h2 id="sidebar-title">Python Exercises</h2>
   <ul id="exercise-list"></ul>
+  <p id="sync-status">Progress is saved in this browser.</p>
   <div id="sidebar-footer">
-    <button id="btn-login" title="Login / configure AWS credentials">Login</button>
-    <button id="btn-push" title="Push progress to AWS S3" disabled>Push</button>
+    <button id="btn-login" title="Optional: log in to submit your work to the teacher">Login</button>
+    <button id="btn-push" title="Optional: submit your progress (needs login)" disabled>Submit</button>
   </div>
 </aside>
+
+<!-- Drag to resize the sidebar -->
+<div id="splitter-x" class="splitter" role="separator" aria-orientation="vertical"
+     tabindex="0" title="Drag to resize (double-click to reset)"></div>
 
 <!-- Main area -->
 <main id="main">
@@ -30,27 +35,38 @@
   <div id="toolbar">
     <span id="exercise-title">Select an exercise</span>
     <div id="toolbar-buttons">
-      <button id="btn-run" title="Run code (Ctrl+Enter)">Run</button>
-      <button id="btn-check" title="Check against tests">Check</button>
-      <button id="btn-reset" title="Reset to template">Reset</button>
-      <button id="btn-console" title="Toggle interactive console">Console</button>
+      <button id="btn-run" title="Run code (Ctrl+Enter)">&#9654; Run</button>
+      <button id="btn-check" title="Check against tests">&#10003; Check</button>
+      <button id="btn-reset" title="Reset to template">&#8635; Reset</button>
+      <button id="btn-console" title="Toggle interactive console">&gt;_ Console</button>
+      <button id="btn-download" title="Download completed exercises as Markdown" disabled>&#8595; Download</button>
     </div>
   </div>
 
-  <!-- Editor area -->
+  <!-- Editor area
+       Syntax highlighting: a Prism-rendered <pre> sits underneath a transparent
+       textarea. The textarea keeps all native editing behaviour (caret, undo,
+       selection, Tab handling); the <pre> only paints the colors. Both must keep
+       identical font metrics, padding and wrapping or the layers drift apart. -->
   <div id="editor-container">
-    <textarea id="editor" spellcheck="false" placeholder="# Select an exercise from the left panel"></textarea>
+    <pre id="editor-highlight" aria-hidden="true"><code class="language-python"></code></pre>
+    <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off"
+              placeholder="# Select an exercise from the left panel"></textarea>
   </div>
+
+  <!-- Drag to resize the editor / output split -->
+  <div id="splitter-y" class="splitter" role="separator" aria-orientation="horizontal"
+       tabindex="0" title="Drag to resize (double-click to reset)"></div>
 
   <!-- Output area with tabs -->
   <div id="output-area">
     <div id="output-tabs">
       <button class="tab active" data-tab="output">Output</button>
       <button class="tab" data-tab="tests">Tests</button>
-      <button class="tab" data-tab="console">Console</button>
+      <button class="tab" data-tab="console">&gt;_ Console (iPython)</button>
     </div>
     <div id="output-pane" class="tab-content active">
-      <pre id="output"></pre>
+      <pre id="output">Loading Python runtime...</pre>
     </div>
     <div id="tests-pane" class="tab-content">
       <pre id="tests-output"></pre>
@@ -58,8 +74,13 @@
     <div id="console-pane" class="tab-content">
       <div id="console-history"></div>
       <div id="console-input-line">
-        <span class="prompt">&gt;&gt;&gt; </span>
-        <input id="console-input" type="text" spellcheck="false" autocomplete="off" placeholder="Type Python here...">
+        <span class="prompt" id="console-prompt">&gt;&gt;&gt;&nbsp;</span>
+        <!-- textarea, not input: multi-line blocks (def/for/if...) are editable.
+             Enter submits a complete statement, Shift+Enter forces a new line,
+             and an unfinished block auto-continues with indentation. -->
+        <textarea id="console-input" rows="1" spellcheck="false" autocomplete="off"
+                  autocapitalize="off" wrap="off"
+                  placeholder="Python — Enter to run, Shift+Enter for a new line"></textarea>
       </div>
     </div>
   </div>
@@ -69,8 +90,10 @@
 <!-- Login modal -->
 <div id="login-modal" class="modal hidden">
   <div class="modal-content">
-    <h3>AWS Credentials</h3>
-    <p>Enter credentials to sync your progress to S3.</p>
+    <h3>Submit Your Work</h3>
+    <p>Optional. Everything works without logging in &mdash; your code and
+       completed exercises are already saved in this browser. Log in only to
+       submit your work to the teacher.</p>
     <label>Username<input id="login-user" type="text" autocomplete="username"></label>
     <label>Password<input id="login-pass" type="password" autocomplete="current-password"></label>
     <div class="modal-buttons">
@@ -81,8 +104,14 @@
   </div>
 </div>
 
-<!-- Load Pyodide from vendored copy -->
-<script src="vendor/pyodide/314.0.6/pyodide/pyodide.js"></script>
+<!--
+  Pyodide vendor is local: vendor/pyodide/314.0.6/pyodide/
+  The worker (pyodide-worker.js) loads it via importScripts using an absolute URL.
+  No main-thread script tag needed for Pyodide.
+-->
+
+<!-- Prism 1.29 (python grammar included), vendored in the Page repo -->
+<script src="/js/tin-prism-dark.js"></script>
 
 <!-- App scripts -->
 <script src="worker-manager.js"></script>

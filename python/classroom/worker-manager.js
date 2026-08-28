@@ -1,149 +1,85 @@
 /* worker-manager.js
- * Manages a Pyodide Web Worker for running student code without blocking the UI.
- * Communicates via postMessage.
+ * Spawns pyodide-worker.js as a real module Worker file (not a Blob) so that
+ * the dynamic import() inside the worker resolves against the page origin.
  */
 
 class PyodideWorkerManager {
-  constructor(pyodideUrl) {
+  constructor(pyodideUrl, workerUrl) {
     this.pyodideUrl = pyodideUrl;
-    this.worker = null;
-    this.ready = false;
-    this._pending = null;
+    this.workerUrl  = workerUrl;
+    this.worker     = null;
+    this.ready      = false;
+    this._pending   = null;
     this._readyResolve = null;
-    this.readyPromise = new Promise(resolve => { this._readyResolve = resolve; });
+    this.readyPromise  = new Promise(r => { this._readyResolve = r; });
   }
 
   init() {
-    const blob = new Blob([this._workerCode()], { type: 'application/javascript' });
-    this.worker = new Worker(URL.createObjectURL(blob));
-    this.worker.onmessage = (e) => this._onMessage(e.data);
-    this.worker.onerror = (err) => {
+    // Module worker: Pyodide 3.14 builds are ESM-only (no classic workers)
+    this.worker = new Worker(this.workerUrl, { type: 'module' });
+    this.worker.onmessage = e => this._onMessage(e.data);
+    this.worker.onerror   = err => {
       console.error('[Worker error]', err);
       if (this._pending) {
-        this._pending.reject(new Error('Worker error: ' + err.message));
+        this._pending.reject(new Error('Worker error: ' + (err.message || err)));
         this._pending = null;
       }
     };
+    // Send the absolute URL of pyodide.mjs so the dynamic import succeeds
     this.worker.postMessage({ type: 'init', pyodideUrl: this.pyodideUrl });
   }
 
   _onMessage(msg) {
     if (msg.type === 'ready') {
       this.ready = true;
-      if (this._readyResolve) this._readyResolve();
-    } else if (msg.type === 'result') {
+      this._readyResolve();
+    } else if (msg.type === 'error') {
+      console.error('[Worker init error]', msg.error);
+    } else if (msg.type === 'result' || msg.type === 'console-result') {
       if (this._pending) {
-        this._pending.resolve({ stdout: msg.stdout, stderr: msg.stderr, result: msg.result, error: msg.error });
-        this._pending = null;
-      }
-    } else if (msg.type === 'console-result') {
-      if (this._pending) {
-        this._pending.resolve({ stdout: msg.stdout, stderr: msg.stderr, result: msg.result, error: msg.error });
+        this._pending.resolve({
+          stdout: msg.stdout,
+          stderr: msg.stderr,
+          result: msg.result,
+          error:  msg.error
+        });
         this._pending = null;
       }
     }
   }
 
-  async run(code, mode = 'exec') {
-    await this.readyPromise;
+  _enqueue(msgType, extra) {
+    if (this._pending) {
+      // Busy: reject immediately so the caller knows
+      return Promise.reject(new Error('Python runtime busy — please wait'));
+    }
     return new Promise((resolve, reject) => {
       this._pending = { resolve, reject };
-      this.worker.postMessage({ type: 'run', code, mode });
+      this.worker.postMessage({ type: msgType, ...extra });
     });
   }
 
-  async runConsole(line) {
+  async run(code) {
     await this.readyPromise;
-    return new Promise((resolve, reject) => {
-      this._pending = { resolve, reject };
-      this.worker.postMessage({ type: 'console', code: line });
-    });
+    return this._enqueue('run', { code });
+  }
+
+  async runConsole(code) {
+    await this.readyPromise;
+    return this._enqueue('console', { code });
   }
 
   terminate() {
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
-      this.ready = false;
-      this.readyPromise = new Promise(resolve => { this._readyResolve = resolve; });
+      this.ready  = false;
+      this.readyPromise = new Promise(r => { this._readyResolve = r; });
     }
   }
 
   restart() {
     this.terminate();
     this.init();
-  }
-
-  _workerCode() {
-    return `
-      let pyodide = null;
-
-      async function initPyodide(url) {
-        importScripts(url);
-        pyodide = await loadPyodide();
-        postMessage({ type: 'ready' });
-      }
-
-      function captureRun(code, mode) {
-        let stdout = '';
-        let stderr = '';
-        pyodide.setStdout({ batched: (s) => { stdout += s + '\\n'; } });
-        pyodide.setStderr({ batched: (s) => { stderr += s + '\\n'; } });
-
-        let result = null;
-        let error = null;
-        try {
-          if (mode === 'eval') {
-            result = String(pyodide.runPython(code));
-          } else {
-            pyodide.runPython(code);
-          }
-        } catch (e) {
-          error = e.message || String(e);
-        }
-        return { stdout: stdout.trimEnd(), stderr: stderr.trimEnd(), result, error };
-      }
-
-      self.onmessage = async function(e) {
-        const msg = e.data;
-        if (msg.type === 'init') {
-          await initPyodide(msg.pyodideUrl);
-        } else if (msg.type === 'run') {
-          const res = captureRun(msg.code, msg.mode);
-          postMessage({ type: 'result', ...res });
-        } else if (msg.type === 'console') {
-          // H4 fix: proper REPL eval-then-exec with correct repr
-          let stdout = '';
-          let stderr = '';
-          let result = null;
-          let error = null;
-          pyodide.setStdout({ batched: (s) => { stdout += s + '\\n'; } });
-          pyodide.setStderr({ batched: (s) => { stderr += s + '\\n'; } });
-          try {
-            // Try as expression first (like Python REPL)
-            const val = pyodide.runPython('__builtins__.__import__("builtins").eval(' + JSON.stringify(msg.code) + ')');
-            if (val !== undefined && val !== null) {
-              pyodide.globals.set('_', val);
-              const noneType = pyodide.globals.get('None');
-              if (val !== noneType) {
-                result = String(pyodide.runPython('repr(_)'));
-              }
-            }
-          } catch(evalErr) {
-            // Not an expression, try exec
-            stdout = '';
-            stderr = '';
-            pyodide.setStdout({ batched: (s) => { stdout += s + '\\n'; } });
-            pyodide.setStderr({ batched: (s) => { stderr += s + '\\n'; } });
-            try {
-              pyodide.runPython(msg.code);
-            } catch(execErr) {
-              error = execErr.message || String(execErr);
-            }
-          }
-          postMessage({ type: 'console-result', stdout: stdout.trimEnd(), stderr: stderr.trimEnd(), result, error });
-        }
-      };
-    `;
   }
 }

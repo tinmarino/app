@@ -17,8 +17,9 @@ body {
 
 /* --- Sidebar --- */
 #sidebar {
-  width: 260px;
-  min-width: 200px;
+  width: 260px;          /* overridden inline by the drag handler */
+  min-width: 140px;
+  flex: 0 0 auto;
   background: var(--gb-dark0_hard);
   border-right: 2px solid var(--gb-dark2);
   display: flex;
@@ -82,6 +83,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
   padding: 8px 14px;
   background: var(--gb-dark1);
   border-bottom: 1px solid var(--gb-dark2);
@@ -90,10 +93,17 @@ body {
 #exercise-title {
   font-weight: bold;
   color: var(--gb-bright_yellow);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #toolbar-buttons {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -120,32 +130,76 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   flex: 1;
   min-height: 0;
   padding: 8px;
+  position: relative;
 }
 
-#editor {
-  width: 100%;
-  height: 100%;
-  resize: none;
-  background: var(--gb-dark0_hard);
-  color: var(--gb-light0);
-  border: 1px solid var(--gb-dark2);
+/* The two editor layers must agree on every metric that affects glyph position,
+   otherwise the colored text drifts away from the caret. Keep this block and
+   the #editor block below in sync. */
+#editor,
+#editor-highlight {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  margin: 0;
+  border: 1px solid transparent;
   border-radius: 4px;
   padding: 12px;
   font-family: 'Consolas', 'Fira Code', monospace;
   font-size: 14px;
   line-height: 1.5;
   tab-size: 4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+/* Bottom layer: painted by Prism, never interactive */
+#editor-highlight {
+  background: var(--gb-dark0_hard);
+  border-color: var(--gb-dark2);
+  pointer-events: none;
+  overflow: hidden;
+}
+#editor-highlight code {
+  font: inherit;
+  background: none;
+  padding: 0;
+  white-space: inherit;
+  word-break: inherit;
+  text-shadow: none;
+}
+
+/* Top layer: real textarea, invisible text, visible caret */
+#editor {
+  width: auto;
+  height: auto;
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--gb-light0);
   outline: none;
 }
-#editor:focus { border-color: var(--gb-neutral_blue); }
+#editor::selection { background: var(--gb-dark3); }
+#editor-highlight:has(+ #editor:focus) { border-color: var(--gb-neutral_blue); }
+
+/* The Prism theme styles pre[class*=language-]; our wrapper must win */
+#editor-highlight[class],
+#editor-highlight code[class] {
+  margin: 0;
+  text-shadow: none;
+}
 
 /* Output area */
 #output-area {
-  height: 240px;
-  min-height: 120px;
+  height: 240px;         /* overridden inline by the drag handler */
+  min-height: 80px;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  border-top: 2px solid var(--gb-dark2);
 }
 
 #output-tabs {
@@ -268,3 +322,63 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
 @media (max-width: 700px) {
   #sidebar { width: 180px; min-width: 140px; }
 }
+
+/* Local-first status line: the app is fully usable without any login */
+#sync-status {
+  padding: 8px 14px 0;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--gb-gray_245);
+  line-height: 1.4;
+}
+
+button#btn-download { background: var(--gb-faded_purple); color: #fff; }
+button#btn-download:hover:not(:disabled) { background: var(--gb-neutral_purple); }
+
+
+/* --- Draggable splitters -------------------------------------------------
+   Thin grab strips replacing the old static borders. Sizes are persisted in
+   localStorage by app.js; double-click restores the default. */
+.splitter {
+  flex: 0 0 auto;
+  background: var(--gb-dark2);
+  transition: background 0.15s;
+  touch-action: none;         /* let pointer events drive the drag, not scroll */
+}
+.splitter:hover,
+.splitter:focus-visible,
+.splitter.dragging {
+  background: var(--gb-bright_aqua);
+  outline: none;
+}
+
+#splitter-x {
+  width: 5px;
+  cursor: col-resize;
+}
+#splitter-y {
+  height: 5px;
+  cursor: row-resize;
+}
+
+/* While dragging, don't let the pointer select text or hit the iframe content */
+body.resizing { cursor: inherit; user-select: none; }
+body.resizing * { user-select: none !important; }
+
+/* --- Multiline console input --- */
+#console-input-line {
+  align-items: flex-start;    /* prompt stays on the first line */
+}
+#console-input {
+  resize: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: pre;
+  line-height: 1.5;
+  tab-size: 4;
+  min-height: 1.5em;
+  max-height: 40vh;
+  padding: 0;
+}
+#console-prompt { line-height: 1.5; }
+#console-history .continuation { color: var(--gb-gray_245); }
