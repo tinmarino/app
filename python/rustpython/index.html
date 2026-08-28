@@ -3,61 +3,90 @@
 <head>
 <meta charset="utf-8" />
 <title>RustPython Demo</title>
-<link href="styles.css" rel="stylesheet"></head>
 
-<style type="text/css" media="screen">
-body{
+<style type="text/css">
+body {
   background: #002b36;
   color: #fdf6e3;
+  font-family: 'Segoe UI', sans-serif;
+  margin: 0;
+  padding: 20px;
+}
+h3 { color: #b58900; margin-top: 24px; }
+#terminal {
+  background: #073642;
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 200px;
+  margin-bottom: 16px;
+}
+textarea {
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 14px;
+  resize: vertical;
+  background: #073642;
+  color: #93a1a1;
+  border: 1px solid #586e75;
+  border-radius: 4px;
+  padding: 8px;
+}
+#code, #console {
+  height: 30vh;
+  width: calc(100% - 3px);
+}
+#run-btn {
+  width: 6em;
+  height: 2em;
+  font-size: 20px;
+  background: #268bd2;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+#run-btn:hover { background: #2aa198; }
+#error {
+  color: #dc322f;
+  margin-top: 10px;
+  font-family: monospace;
+  white-space: pre-wrap;
+}
+#snippets {
+  float: right;
+  margin-top: 4px;
+  background: #073642;
+  color: #93a1a1;
+  border: 1px solid #586e75;
+  border-radius: 4px;
+  padding: 4px;
+}
+.version-info {
+  float: right;
+  color: #586e75;
+  font-size: 0.85rem;
 }
 </style>
-
+</head>
 
 <body>
 
+<span class="version-info">RustPython (latest demo from upstream)</span>
 
-<div style="float:right">
-  RustPython 2019-08-02
-</div>
+<h3>Interactive Shell</h3>
+<p style="color:#586e75; margin-bottom:8px;">
+  This demo loads the latest RustPython WASM build from the upstream project.
+</p>
+<iframe id="rustpython-frame"
+  src="https://rustpython.github.io/demo/"
+  style="width:100%; height:80vh; border:1px solid #586e75; border-radius:4px; background:#073642;"
+  sandbox="allow-scripts allow-same-origin"
+></iframe>
 
-<h3>Interactive shell</h3>
-<div id="terminal"></div>
+<p style="color:#586e75; margin-top:12px; font-size:0.85rem;">
+  Source: <a href="https://github.com/RustPython/RustPython" style="color:#268bd2;">github.com/RustPython/RustPython</a>
+  &mdash; Demo: <a href="https://rustpython.github.io/demo/" style="color:#268bd2;">rustpython.github.io/demo</a>
+</p>
 
-<h3>Text Editor</h3>
-<div id="code-wrapper">
-    <textarea id="code">
-    </textarea>
-    <select id="snippets">
-
-            <option
-
-            >fetch</option>
-
-            <option
-                 selected
-            >fibonacci</option>
-
-            <option
-
-            >fizzbuzz</option>
-
-            <option
-
-            >mandelbrot</option>
-
-    </select>
-</div>
-
-
-<button id="run-btn">Run &#9655;</button>
-<div id="error"></div>
-
-
-<h3>Standard Output</h3>
-<textarea id="console" readonly>Loading...</textarea>
-
-
-<!-- Go -->
-<script type="text/javascript" src="index.js"></script></body>
-
+</body>
 </html>

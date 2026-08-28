@@ -2,79 +2,83 @@
 <html>
   <head>
     <meta charset="UTF-8">
-    <script src="https://code.jquery.com/jquery-latest.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jquery.terminal/js/jquery.terminal.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/jquery.terminal/css/jquery.terminal.min.css" rel="stylesheet"/>
-    <link href="renderedhtml.css" rel="stylesheet"/>
-    <script src="./pyodide_dev.js"></script>
+    <title>Pyodide Console (v314)</title>
+    <!-- jQuery Terminal for a proper REPL experience -->
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2/js/jquery.terminal.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/jquery.terminal@2/css/jquery.terminal.min.css" rel="stylesheet">
+    <!-- Modern Pyodide from CDN -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v314.0.6/full/pyodide.js"></script>
+    <style>
+      html, body { height: 100%; margin: 0; padding: 0; background: #002b36; }
+      .terminal { font-size: 14px; }
+    </style>
   </head>
   <body>
     <script>
-      languagePluginLoader.then(() => {
-        function pushCode(line) {
-          handleResult(c.push(line))
-        }
+      async function main() {
+        const pyodide = await loadPyodide();
+        await pyodide.loadPackage('pyodide-http');
 
-        var term = $('body').terminal(
-          pushCode,
+        // Set up the interactive console using pyodide.console
+        const pyconsole = pyodide.runPython(`
+          import pyodide.console
+          pyodide.console.PyodideConsole(globals())
+        `);
+
+        const term = $('body').terminal(
+          async function (command) {
+            // Push returns a future; await it
+            const fut = pyconsole.push(command);
+            const syntax_check = fut.syntax_check;
+
+            switch (syntax_check) {
+              case 'syntax-error':
+                term.error(fut.formatted_error);
+                break;
+              case 'incomplete':
+                term.set_prompt('... ');
+                return;
+              case 'complete':
+                try {
+                  const repr_shorten = pyodide.globals.get('__builtins__').__import__('pyodide._core').repr_shorten;
+                  // Await the future result
+                  const result = await fut;
+                  if (result !== undefined && result !== null) {
+                    const text = repr_shorten.callKwargs(result, { separator: '\n' });
+                    if (text && text !== 'None') {
+                      term.echo(text);
+                    }
+                  }
+                } catch (e) {
+                  if (e.constructor.name === 'PythonError') {
+                    term.error(fut.formatted_error);
+                  } else {
+                    throw e;
+                  }
+                }
+                break;
+            }
+            term.set_prompt('>>> ');
+          },
           {
-            greetings: "Welcome to the Pyodide terminal emulator v0.14.3 🐍",
-            prompt: "[[;red;]>>> ]"
+            greetings: `Welcome to Pyodide ${pyodide.version} (CPython ${pyodide.runPython('import sys; sys.version.split()[0]')})`,
+            prompt: '>>> ',
+            completionEscape: false,
+            completion: function (command, callback) {
+              callback(pyconsole.complete(command).toJs()[0]);
+            },
           }
         );
 
+        // Redirect stdout/stderr to terminal
+        pyodide.setStdout({ batched: (s) => term.echo(s) });
+        pyodide.setStderr({ batched: (s) => term.error(s) });
+
         window.term = term;
-        pyodide.runPython(`
-          import io, code, sys
-          from js import term, pyodide
-
-          class Console(code.InteractiveConsole):
-              def runcode(self, code):
-                  sys.stdout = io.StringIO()
-                  sys.stderr = io.StringIO()
-                  term.runPython("\\n".join(self.buffer))
-          _c = Console(locals=globals())
-        `)
-
-        var c = pyodide.pyimport('_c')
-
-        function handleResult(result) {
-          if (result) {
-            term.set_prompt('[[;gray;]... ]')
-          } else {
-            term.set_prompt('[[;red;]>>> ]')
-            var stderr = pyodide.runPython("sys.stderr.getvalue()").trim()
-            if (stderr) {
-              term.echo(`[[;red;]${stderr}]`)
-            } else {
-              var stdout = pyodide.runPython("sys.stdout.getvalue()")
-              if (stdout) {
-                term.echo(stdout.trim())
-              }
-            }
-          }
-        }
-
-        term.runPython = function(code) {
-          pyodide.runPythonAsync(code).then(
-            term.handlePythonResult, term.handlePythonError
-          )
-        }
-
-        term.handlePythonResult = function(result) {
-          if (result === undefined) {
-            return
-          } else if (result['_repr_html_'] !== undefined) {
-            term.echo(result['_repr_html_'], {raw: true})
-          } else {
-            term.echo(result.toString())
-          }
-        }
-
-        term.handlePythonError = function(result) {
-          term.error(result.toString())
-        }
-      });
+        window.pyodide = pyodide;
+      }
+      main();
     </script>
   </body>
 </html>
