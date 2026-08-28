@@ -18,9 +18,6 @@
     .replace(/\/$/, '');
   const MANIFEST_URL = EXERCISES_BASE + '/manifest.json';
   // S3 bucket (lowercase required)
-  const S3_BUCKET = 'python-exercices';
-  const S3_REGION = 'us-east-1';
-  const COOKIE_KEY = 'py_classroom_creds';
   // localStorage keys: current editor buffer, and the last code that passed the tests
   // Keys are namespaced by exercise set: `?ex=` can point at another collection
   // whose ids ("01", "02", ...) would otherwise share this one's saved code and
@@ -71,6 +68,9 @@
   const $loginOk = document.getElementById('login-ok');
   const $loginCancel = document.getElementById('login-cancel');
   const $loginError = document.getElementById('login-error');
+  const $loginNew = document.getElementById('login-new');
+  const $loginNewRow = document.getElementById('login-new-row');
+  const $btnHistory = document.getElementById('btn-history');
 
   // === Shared helpers (pyutil.js) =========================================
   // Indentation and traceback colouring live in pyutil.js so the standalone
@@ -847,8 +847,7 @@
   function refreshStatus() {
     const n = getCompleted().length;
     $btnDownload.disabled = n === 0;
-    const creds = getCreds();
-    const who = creds ? ' Logged in as ' + (creds.username || 'anonymous') + '.' : '';
+    const who = isLoggedIn() ? ' Logged in as ' + currentUser() + '.' : '';
     const base = n
       ? n + ' of ' + exercises.length + ' completed, saved in this browser.' + who
       : 'Progress is saved in this browser.' + who;
@@ -861,11 +860,10 @@
 
   function buildMarkdown() {
     const completed = getCompleted();
-    const creds = getCreds();
     const lines = [
       '# Python Exercises',
       '',
-      (creds && creds.username ? 'Student: ' + creds.username : 'Student: (not logged in)'),
+      (isLoggedIn() ? 'Student: ' + currentUser() : 'Student: (not logged in)'),
       'Date: ' + new Date().toISOString().slice(0, 10),
       'Completed: ' + completed.length + ' of ' + exercises.length,
       ''
@@ -878,8 +876,7 @@
 
   function downloadMarkdown() {
     if (!getCompleted().length) return;
-    const creds = getCreds();
-    const who = (creds && creds.username ? creds.username : 'student').replace(/[^\w.-]+/g, '_');
+    const who = (currentUser() || 'student').replace(/[^\w.-]+/g, '_');
     const name = 'python-exercices-' + who + '-' + new Date().toISOString().slice(0, 10) + '.md';
     const blob = new Blob([buildMarkdown()], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -892,178 +889,53 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // ===============================
-  // === AWS S3 Push / Login ===
-  // ===============================
-  // Everything above works with no credentials at all. The AWS part below is
-  // strictly additive: it only submits what is already stored locally.
+  // ========================================================================
+  // === Login and submission sync (Cognito, see classroom-sync.js) =========
+  // ========================================================================
+  // Everything above works with no login at all. This part is strictly
+  // additive: it submits what is already stored locally, and brings it back.
+  // No AWS credential lives in this page; classroom-sync.js exchanges a
+  // student password for short-lived STS credentials scoped to that student.
 
-  function getCreds() {
-    try {
-      const raw = getCookie(COOKIE_KEY);
-      if (!raw) return null;
-      const bytes = Uint8Array.from(atob(raw), ch => ch.charCodeAt(0));
-      return JSON.parse(new TextDecoder().decode(bytes));
-    } catch { return null; }
-  }
-  function setCreds(creds) {
-    // Store base64-encoded JSON in a cookie (30 days)
-    // btoa() throws on anything outside Latin-1, which a real name easily is
-    const val = btoa(String.fromCharCode(
-      ...new TextEncoder().encode(JSON.stringify(creds))));
-    document.cookie = COOKIE_KEY + '=' + val + '; path=/; max-age=' + (30*86400) + '; SameSite=Strict';
-    $btnPush.disabled = false;
-    refreshStatus();
-  }
-  function getCookie(name) {
-    const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : null;
-  }
+  // The classroom must work with no AWS infrastructure at all: exercises, the
+  // editor, Run, Check, the green checks, the console and Download are pure
+  // client side. Only Submit / History / Login reach the cloud, so a missing or
+  // broken classroom-sync.js degrades to "syncing unavailable" instead of
+  // taking the whole page down at boot.
+  const SYNC_MISSING = 'Submitting is not set up on this server. Everything ' +
+                       'else works, and Download saves your work.';
 
-  // Derive AES key from password (PBKDF2)
-  async function deriveKey(password, salt) {
-    const enc = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
-    return crypto.subtle.deriveKey(
-      { name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' },
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-  }
+  const Sync = window.ClassroomSync || {
+    unavailable: true,
+    isLoggedIn: () => false,
+    username: () => null,
+    identity: () => null,
+    restore: () => null,
+    logout: () => {},
+    login: () => Promise.reject(new Error(SYNC_MISSING)),
+    setNewPassword: () => Promise.reject(new Error(SYNC_MISSING)),
+    submit: () => Promise.reject(new Error(SYNC_MISSING)),
+    loadLatest: () => Promise.reject(new Error(SYNC_MISSING)),
+    listSubmissions: () => Promise.reject(new Error(SYNC_MISSING)),
+    loadSubmission: () => Promise.reject(new Error(SYNC_MISSING))
+  };
 
-  // Decrypt the AWS credentials blob stored locally
-  async function decryptCreds(password, _username) { // _username reserved for future per-user salt
-    // The encrypted blob is fetched from a known path (generated offline)
-    const resp = await fetch('aws-config.enc.json');
-    if (!resp.ok) throw new Error('aws-config.enc.json not found. Generate it with gen-aws-config.js');
-    const blob = await resp.json(); // { iv, salt, ciphertext } all base64
-    const key = await deriveKey(password, blob.salt);
-    const iv = Uint8Array.from(atob(blob.iv), c => c.charCodeAt(0));
-    const ct = Uint8Array.from(atob(blob.ciphertext), c => c.charCodeAt(0));
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
-    return JSON.parse(new TextDecoder().decode(plain));
-  }
-
-  // Signed S3 request with SigV4 (minimal implementation).
-  // method: 'PUT' or 'GET'. For GET, body is '' and the payload hash is the
-  // hash of the empty string, which is what S3 expects.
-  async function s3Request(creds, method, key, body) {
-    const host = S3_BUCKET + '.s3.' + S3_REGION + '.amazonaws.com';
-    const url = 'https://' + host + '/' + key;
-    const now = new Date();
-    const amzDate = now.toISOString().replace(/[:-]/g, '').replace(/\.\d+/, '');
-    const dateStamp = amzDate.slice(0, 8);
-
-    const payloadHash = await sha256hex(method === 'GET' ? '' : body);
-
-    const headers = {
-      'Host': host,
-      'x-amz-date': amzDate,
-      'x-amz-content-sha256': payloadHash,
-    };
-    if (method !== 'GET') headers['Content-Type'] = 'application/json';
-
-    const signedHeaderKeys = Object.keys(headers).map(k => k.toLowerCase()).sort();
-    const signedHeaders = signedHeaderKeys.join(';');
-
-    const canonicalHeadersStr = signedHeaderKeys.map(k => {
-      // Find the original header
-      for (const orig of Object.keys(headers)) {
-        if (orig.toLowerCase() === k) return k + ':' + headers[orig].trim();
-      }
-      return '';
-    }).join('\n') + '\n';
-
-    // C3 fix: URI-encode path segments for valid canonical request
-    const canonicalUri = '/' + key.split('/').map(encodeURIComponent).join('/');
-    const canonicalRequest = [
-      method, canonicalUri, '',
-      canonicalHeadersStr,
-      signedHeaders,
-      payloadHash
-    ].join('\n');
-
-    const credentialScope = dateStamp + '/' + S3_REGION + '/s3/aws4_request';
-    const stringToSign = [
-      'AWS4-HMAC-SHA256',
-      amzDate,
-      credentialScope,
-      await sha256hex(canonicalRequest)
-    ].join('\n');
-
-    const signingKey = await getSignatureKey(creds.secretAccessKey, dateStamp, S3_REGION, 's3');
-    const signature = await hmacHex(signingKey, stringToSign);
-
-    const authHeader = 'AWS4-HMAC-SHA256 Credential=' + creds.accessKeyId + '/' + credentialScope +
-      ', SignedHeaders=' + signedHeaders + ', Signature=' + signature;
-
-    const fetchHeaders = { ...headers, 'Authorization': authHeader };
-    delete fetchHeaders.Host;   // the browser sets Host itself and forbids it here
-
-    return fetch(url, {
-      method,
-      headers: fetchHeaders,
-      body: method === 'GET' ? undefined : body
-    });
-  }
-
-  async function s3Put(creds, key, body) {
-    const resp = await s3Request(creds, 'PUT', key, body);
-    if (!resp.ok) throw new Error('S3 PUT failed: ' + resp.status + ' ' + await resp.text());
-    return true;
-  }
-
-  // Returns the parsed object, or null when the student has never submitted.
-  async function s3GetJson(creds, key) {
-    const resp = await s3Request(creds, 'GET', key, '');
-    if (resp.status === 404 || resp.status === 403) return null;
-    if (!resp.ok) throw new Error('S3 GET failed: ' + resp.status + ' ' + await resp.text());
-    return resp.json();
-  }
-
-  async function sha256hex(msg) {
-    const enc = new TextEncoder();
-    const hash = await crypto.subtle.digest('SHA-256', enc.encode(msg));
-    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  async function hmac(key, msg) {
-    const cryptoKey = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    return new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(msg)));
-  }
-
-  async function hmacHex(key, msg) {
-    const sig = await hmac(key, msg);
-    return Array.from(sig).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  async function getSignatureKey(secretKey, dateStamp, region, service) {
-    const enc = new TextEncoder();
-    let k = await hmac(enc.encode('AWS4' + secretKey), dateStamp);
-    k = await hmac(k, region);
-    k = await hmac(k, service);
-    k = await hmac(k, 'aws4_request');
-    return k;
-  }
-
-  function progressKey(creds) {
-    return 'progress/' + (creds.username || 'anonymous') + '.json';
-  }
+  function syncAvailable() { return !Sync.unavailable; }
+  function isLoggedIn() { return Sync.isLoggedIn(); }
+  function currentUser() { return Sync.username(); }
 
   // === Pull progress =====================================================
-  // Logging in is meant to bring your work back: localStorage is per origin and
-  // per browser, so without this the green checks and the saved scripts only
-  // ever exist on the machine where they were written.
+  // Logging in is meant to bring your work back: localStorage is per origin
+  // and per browser, so without this the green checks and the saved scripts
+  // only ever exist on the machine where they were written.
   //
   // Merge policy: the done list is a union (a pass is a pass, wherever it
-  // happened) and remote code only fills gaps. Local edits are never clobbered,
-  // because the student may be halfway through an exercise right now.
-  async function pullProgress(creds, announce) {
-    const remote = await s3GetJson(creds, progressKey(creds));
+  // happened) and remote code only fills gaps. Local edits are never
+  // clobbered, because the student may be halfway through an exercise.
+  async function pullProgress(announce) {
+    const remote = await Sync.loadLatest();
     if (!remote) {
-      if (announce) setSyncNote('Nothing submitted yet for ' + (creds.username || 'anonymous') + '.');
+      if (announce) setSyncNote('Nothing submitted yet for ' + currentUser() + '.');
       return { restored: 0, marked: 0, found: false };
     }
 
@@ -1096,9 +968,11 @@
       }
     }
     if (announce) {
-      setSyncNote('Restored from your submission of ' +
-        (remote.savedAt ? remote.savedAt.slice(0, 16).replace('T', ' ') : 'an earlier session') +
-        ': ' + merged.length + ' completed, ' + restored + ' script(s).');
+      const when = remote.savedAt
+        ? remote.savedAt.slice(0, 16).replace('T', ' ')
+        : 'an earlier session';
+      setSyncNote('Restored from ' + when + ': ' + merged.length +
+                  ' completed, ' + restored + ' script(s).');
     }
     return { restored, marked, found: true };
   }
@@ -1109,12 +983,34 @@
     refreshStatus();
   }
 
-  // === Push progress ===
+  // === Submission history ================================================
+  // Each submission is its own object, so the trail is kept rather than
+  // overwritten. This lists the student's own, newest first.
+  async function showHistory() {
+    if (!isLoggedIn()) { showLogin(); return; }
+    switchTab('console');
+    appendConsole('Loading your submission history...', 'help');
+    try {
+      const items = await Sync.listSubmissions();
+      if (!items.length) { appendConsole('No submissions yet.', 'help'); return; }
+      appendConsole(items.length + ' submission(s), newest first:', 'help');
+      items.slice(0, 40).forEach(item => {
+        const name = item.key.split('/').pop().replace(/\.json$/, '');
+        appendConsole('  ' + item.modified.slice(0, 16).replace('T', ' ') +
+                      '  ' + name + '  (' + item.size + ' bytes)');
+      });
+      if (items.length > 40) appendConsole('  ... and ' + (items.length - 40) + ' more');
+    } catch (err) {
+      appendConsole('Could not list your submissions: ' + err.message, 'error');
+    }
+  }
+
+  // === Push progress =====================================================
   async function pushProgress() {
-    const creds = getCreds();
-    if (!creds) { showLogin(); return; }
+    if (!isLoggedIn()) { showLogin(); return; }
 
     const progress = {
+      exercise: currentExercise ? currentExercise.id : 'all',
       done: getDoneList(),
       exercises: {},   // current editor buffer
       solved: {}       // code that actually passed the tests
@@ -1127,54 +1023,99 @@
     });
     progress.markdown = buildMarkdown();
 
-    const key = progressKey(creds);
-    progress.savedAt = new Date().toISOString();
-    progress.username = creds.username || 'anonymous';
-    const body = JSON.stringify(progress, null, 2);
-
+    $btnPush.disabled = true;
     try {
-      await s3Put(creds, key, body);
-      alert('Progress pushed successfully!');
-    } catch (e) {
-      alert('Push failed: ' + e.message);
-      console.error(e);
+      const record = await Sync.submit(progress);
+      setSyncNote('Submitted at ' + record.savedAt.slice(0, 16).replace('T', ' ') + '.');
+    } catch (err) {
+      setSyncNote('Submit failed: ' + err.message);
+      console.error(err);
+    } finally {
+      $btnPush.disabled = !isLoggedIn();
     }
   }
 
-  // === Login ===
+  // === Login =============================================================
+  // Two shapes: the normal one, and the first login of an account whose
+  // password is still the shared class one, where Cognito demands a new
+  // password before it hands out any token.
+  let pendingChallenge = null;
+
   function showLogin() {
+    if (!syncAvailable()) { setSyncNote(SYNC_MISSING); return; }
     $loginModal.classList.remove('hidden');
     $loginError.textContent = '';
+    showNewPasswordField(false);
+    $loginUser.value = currentUser() || '';
     $loginUser.focus();
   }
-  function hideLogin() { $loginModal.classList.add('hidden'); }
+  function hideLogin() {
+    $loginModal.classList.add('hidden');
+    pendingChallenge = null;
+    showNewPasswordField(false);
+  }
+  function showNewPasswordField(on) {
+    $loginNewRow.classList.toggle('hidden', !on);
+    if (on) { $loginNew.value = ''; $loginNew.focus(); }
+  }
 
   async function handleLogin() {
     const user = $loginUser.value.trim();
     const pass = $loginPass.value;
-    if (!user || !pass) { $loginError.textContent = 'Both fields required'; return; }
 
-    try {
-      const awsCreds = await decryptCreds(pass, user);
-      const creds = { ...awsCreds, username: user };
-      setCreds(creds);
-      hideLogin();
-      // The point of logging in is getting your work back
-      $loginError.textContent = '';
+    // Second step: the student is choosing their own password
+    if (pendingChallenge) {
+      const fresh = $loginNew.value;
+      if (fresh.length < 8) { $loginError.textContent = 'At least 8 characters.'; return; }
+      $loginError.textContent = 'Setting your password...';
       try {
-        await pullProgress(creds, true);
+        await Sync.setNewPassword(pendingChallenge.username, pendingChallenge.session, fresh);
+        hideLogin();
+        await afterLogin();
       } catch (err) {
-        setSyncNote('Could not read your submission: ' + err.message);
-        console.error(err);
+        $loginError.textContent = err.message;
       }
-    } catch (e) {
-      // Distinguish "submitting is not set up here" from "wrong password"
-      $loginError.textContent = /not found/i.test(e.message)
-        ? 'Submitting is not enabled on this server. Use Download instead.'
-        : 'Wrong password.';
-      console.error(e);
+      return;
+    }
+
+    if (!user || !pass) { $loginError.textContent = 'Both fields required.'; return; }
+    $loginError.textContent = 'Signing in...';
+    try {
+      const res = await Sync.login(user, pass);
+      if (res.status === 'new-password-required') {
+        pendingChallenge = res;
+        $loginError.textContent = 'First login: choose your own password.';
+        showNewPasswordField(true);
+        return;
+      }
+      hideLogin();
+      await afterLogin();
+    } catch (err) {
+      $loginError.textContent = err.message;
     }
   }
+
+  async function afterLogin() {
+    $btnPush.disabled = false;
+    $btnHistory.disabled = false;
+    $btnLogin.textContent = 'Logout';
+    refreshStatus();
+    try {
+      await pullProgress(true);
+    } catch (err) {
+      setSyncNote('Could not read your submission: ' + err.message);
+      console.error(err);
+    }
+  }
+
+  function handleLogout() {
+    Sync.logout();
+    $btnPush.disabled = true;
+    $btnHistory.disabled = true;
+    $btnLogin.textContent = 'Login';
+    setSyncNote('Logged out. Your work stays in this browser.');
+  }
+
 
   // === Event bindings ===
   $btnRun.addEventListener('click', runCode);
@@ -1234,11 +1175,15 @@
     localStorage.removeItem(RUN_PREFIX + currentExercise.id);
     autoGrowRun();
   });
-  $btnLogin.addEventListener('click', showLogin);
+  $btnLogin.addEventListener('click', () => {
+    if (isLoggedIn()) handleLogout(); else showLogin();
+  });
+  $btnHistory.addEventListener('click', showHistory);
   $btnPush.addEventListener('click', pushProgress);
   $loginOk.addEventListener('click', handleLogin);
   $loginCancel.addEventListener('click', hideLogin);
   $loginPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  $loginNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
 
   $editor.addEventListener('keydown', (e) => {
     // Ctrl/Cmd+Enter runs
@@ -1278,9 +1223,20 @@
     }
   });
 
-  // Credentials are optional: without them everything still runs, checks,
-  // marks exercises green and downloads. Only Submit needs a login.
-  if (getCreds()) $btnPush.disabled = false;
+  // A login is optional: without one everything still runs, checks, marks
+  // exercises green, and downloads. Only Submit and History need it.
+  Sync.restore();
+  if (!syncAvailable()) {
+    // No cloud on this deployment: say so on the buttons, once
+    $btnLogin.disabled = true;
+    $btnLogin.title = SYNC_MISSING;
+    $btnPush.title = SYNC_MISSING;
+    $btnHistory.title = SYNC_MISSING;
+  } else if (isLoggedIn()) {
+    $btnPush.disabled = false;
+    $btnHistory.disabled = false;
+    $btnLogin.textContent = 'Logout';
+  }
 
   // === Boot ===
   repaint();
@@ -1290,10 +1246,13 @@
   loadManifest().then(async () => {
     refreshStatus();
     // Already logged in from a previous visit: bring the work back quietly
-    const creds = getCreds();
-    if (!creds) return;
-    try { await pullProgress(creds, false); }
-    catch (err) { console.error('Could not restore progress:', err); }
+    if (!syncAvailable() || !isLoggedIn()) return;
+    try { await pullProgress(false); }
+    catch (err) {
+      // An expired refresh token lands here: ask for a login, do not shout
+      setSyncNote('Log in again to sync your work.');
+      console.error('Could not restore progress:', err);
+    }
   });
 
   // Progress used to be stored under un-namespaced keys (py_ex_ex01, py_done).

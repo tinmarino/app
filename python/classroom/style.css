@@ -620,3 +620,6 @@ button#btn-stop.urgent { animation: stop-pulse 0.9s ease-in-out infinite; }
   #run-bar { flex-wrap: wrap; }
   #run-bar label { flex-basis: 100%; }
 }
+
+/* The "choose your own password" row appears only on a first login */
+#login-new-row.hidden { display: none; }

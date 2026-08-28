@@ -21,6 +21,7 @@
   <div id="sidebar-footer">
     <button id="btn-login" type="button" title="Optional: log in to submit your work to the teacher">Login</button>
     <button id="btn-push" type="button" title="Optional: submit your progress (needs login)" disabled>Submit</button>
+    <button id="btn-history" type="button" title="List your past submissions (needs login)" disabled>History</button>
   </div>
 </aside>
 
@@ -120,10 +121,14 @@
   <div class="modal-content">
     <h3>Submit Your Work</h3>
     <p>Optional. Everything works without logging in &mdash; your code and
-       completed exercises are already saved in this browser. Log in only to
-       submit your work to the teacher.</p>
+       completed exercises are already saved in this browser. Log in to submit
+       your work to the teacher, and to get it back on another computer or
+       phone.</p>
     <label>Username<input id="login-user" type="text" autocomplete="username"></label>
     <label>Password<input id="login-pass" type="password" autocomplete="current-password"></label>
+    <!-- Shown only when Cognito answers NEW_PASSWORD_REQUIRED, i.e. the account
+         still carries the shared class password as a temporary one. -->
+    <label id="login-new-row" class="hidden">Choose your own password<input id="login-new" type="password" autocomplete="new-password"></label>
     <div class="modal-buttons">
       <button id="login-ok" type="button">Login</button>
       <button id="login-cancel" type="button">Cancel</button>
@@ -143,6 +148,7 @@
 
 <!-- App scripts -->
 <script src="pyutil.js"></script>
+<script src="classroom-sync.js"></script>
 <script src="markdown.js"></script>
 <script src="worker-manager.js"></script>
 <script src="app.js"></script>
