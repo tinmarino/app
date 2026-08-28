@@ -45,11 +45,20 @@ def _repl_make():
 
 _repl_make()
 
+# Names the REPL machinery itself needs. Deleting these (json, sys, pyodide)
+# is what a naive "clear everything public" loop does, and it breaks the console
+# while reporting success -- so keep them explicitly.
+_REPL_KEEP = {"json", "sys", "pyodide", "_REPL_KEEP"}
+
+
 def _repl_reset_json():
-    for k in [k for k in globals() if not k.startswith("_")]:
+    victims = [k for k in globals()
+               if not k.startswith("_") and k not in _REPL_KEEP]
+    for k in victims:
         del globals()[k]
     _repl_make()
-    return json.dumps({"status": "ok", "stdout": "", "stderr": "", "repr": None, "error": None})
+    return json.dumps({"status": "ok", "stdout": "", "stderr": "",
+                       "repr": None, "error": None})
 
 def _repl_trunc(text, limit=8000):
     return text if len(text) <= limit else text[:limit] + "\\n...<truncated>"

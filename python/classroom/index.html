@@ -38,6 +38,8 @@
       <button id="btn-run" title="Run code (Ctrl+Enter)">&#9654; Run</button>
       <button id="btn-check" title="Check against tests">&#10003; Check</button>
       <button id="btn-reset" title="Reset to template">&#8635; Reset</button>
+      <button id="btn-stop" title="Stop and restart the Python runtime (use if your code hangs)">&#9632; Stop</button>
+      <button id="btn-description" title="Show the full task description">&#9432; Description</button>
       <button id="btn-console" title="Toggle interactive console">&gt;_ Console</button>
       <button id="btn-download" title="Download completed exercises as Markdown" disabled>&#8595; Download</button>
     </div>
@@ -49,9 +51,28 @@
        selection, Tab handling); the <pre> only paints the colors. Both must keep
        identical font metrics, padding and wrapping or the layers drift apart. -->
   <div id="editor-container">
+    <!-- Rendered from the exercise's "## Description" section. Overlays the
+         editor so the task can be long without bloating the docstring. -->
+    <section id="description-panel" class="hidden" aria-labelledby="description-title">
+      <header id="description-head">
+        <span id="description-title">Description</span>
+        <button id="btn-description-close" title="Close (Esc)">&times;</button>
+      </header>
+      <div id="description-body" class="markdown"></div>
+    </section>
     <pre id="editor-highlight" aria-hidden="true"><code class="language-python"></code></pre>
     <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off"
               placeholder="# Select an exercise from the left panel"></textarea>
+  </div>
+
+  <!-- How Run invokes the student's code. Defaults to the exercise's
+       ```python # run``` block; editable, and remembered per exercise. -->
+  <div id="run-bar">
+    <label for="run-args">Run with</label>
+    <textarea id="run-args" rows="1" spellcheck="false" autocomplete="off"
+              autocapitalize="off" wrap="off"
+              placeholder="print(my_function(...))"></textarea>
+    <button id="btn-run-reset" title="Restore the exercise's default call">&#8635;</button>
   </div>
 
   <!-- Drag to resize the editor / output split -->
@@ -80,7 +101,7 @@
              Shift+Enter (or Ctrl+Enter) runs the block. -->
         <textarea id="console-input" rows="1" spellcheck="false" autocomplete="off"
                   autocapitalize="off" wrap="off"
-                  placeholder="Python — Shift+Enter to run, Enter for a new line"></textarea>
+                  placeholder="Python — Enter to run, Shift+Enter for a new line, !help for keys"></textarea>
       </div>
     </div>
   </div>
@@ -114,6 +135,7 @@
 <script src="/js/tin-prism-dark.js"></script>
 
 <!-- App scripts -->
+<script src="markdown.js"></script>
 <script src="worker-manager.js"></script>
 <script src="app.js"></script>
 
