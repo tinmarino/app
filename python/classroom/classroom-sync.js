@@ -33,13 +33,48 @@
   const S3_HOST       = BUCKET + '.s3.' + REGION + '.amazonaws.com';
   const PROVIDER      = IDP_HOST + '/' + USER_POOL_ID;
 
-  // Only the refresh token and the username are kept. Never a password, and
-  // never the STS credentials: those are short-lived and stay in memory.
+  // The refresh token stays in localStorage and the STS credentials stay only in
+  // memory. The user also asked for a convenience cookie keeping the login name
+  // and password so the page can sign back in automatically after a long pause.
+  // That cookie is for speed, not for secrecy.
   const STORE_KEY = 'py_classroom_session';
+  const LOGIN_COOKIE = 'py_classroom_login';
+  const LOGIN_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
   let session = null;   // { username, refreshToken }
   let creds = null;     // { AccessKeyId, SecretKey, SessionToken, expiresAt }
   let identityId = null;
+
+  function cookieAttrs(maxAge) {
+    let attrs = 'path=/app/python/classroom/; samesite=lax';
+    if (typeof maxAge === 'number') attrs += '; max-age=' + maxAge;
+    if (location.protocol === 'https:') attrs += '; secure';
+    return attrs;
+  }
+
+  function rememberLogin(username, password) {
+    const payload = encodeURIComponent(JSON.stringify({ username, password }));
+    document.cookie = LOGIN_COOKIE + '=' + payload + '; ' + cookieAttrs(LOGIN_COOKIE_MAX_AGE);
+  }
+
+  function rememberedLogin() {
+    const pattern = new RegExp('(?:^|; )' + LOGIN_COOKIE + '=([^;]*)');
+    const found = document.cookie.match(pattern);
+    if (!found) return null;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(found[1]));
+      if (!parsed || typeof parsed.username !== 'string' || typeof parsed.password !== 'string') {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function forgetRememberedLogin() {
+    document.cookie = LOGIN_COOKIE + '=; ' + cookieAttrs(0);
+  }
 
   // ---------------------------------------------------------------- Cognito
 
@@ -125,6 +160,7 @@
       throw new Error('Unexpected challenge: ' + (auth.ChallengeName || 'unknown'));
     }
     await finish(username, auth.AuthenticationResult);
+    rememberLogin(username, password);
     return { status: 'ok' };
   }
 
@@ -138,6 +174,7 @@
     });
     if (!auth.AuthenticationResult) throw new Error('Could not set the new password.');
     await finish(username, auth.AuthenticationResult);
+    rememberLogin(username, newPassword);
     return { status: 'ok' };
   }
 
@@ -166,11 +203,16 @@
     return creds;
   }
 
-  function logout() {
+  function dropSession() {
     session = null;
     creds = null;
     identityId = null;
     try { localStorage.removeItem(STORE_KEY); } catch { /* nothing to do */ }
+  }
+
+  function logout() {
+    dropSession();
+    forgetRememberedLogin();
   }
 
   function isLoggedIn() { return !!(session && session.refreshToken); }
@@ -297,7 +339,8 @@
   async function loadSubmission(key) { return getJson(key); }
 
   global.ClassroomSync = {
-    login, setNewPassword, logout, isLoggedIn, username,
+    login, setNewPassword, logout, dropSession, isLoggedIn, username,
+    rememberLogin, rememberedLogin, forgetRememberedLogin,
     identity: () => identityId,
     restore: loadSession,
     ensureCredentials,

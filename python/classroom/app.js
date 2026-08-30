@@ -76,7 +76,7 @@
   // Indentation and traceback colouring live in pyutil.js so the standalone
   // shell behaves exactly the same way.
   const {
-    esc, highlightPy, renderPyLine, renderOutput,
+    esc, highlightPy, renderPyLine, renderOutput, simplifyTracebacks,
     INDENT, INDENT_N, stripLiterals, bracketDepth, indentAfter,
     smartNewline, smartBackspace
   } = window.PyUtil;
@@ -197,21 +197,39 @@
 
   // === Mobile gestures ====================================================
   // On a narrow screen the sidebar is an overlay and the output area is a
-  // drawer, so the editor keeps the screen. Three gestures drive them:
+  // drawer, so the editor keeps the screen. The gesture hot zones sit away
+  // from Android's own edge swipes: mid-left for the exercise bar, mid-bottom
+  // for the output drawer. Left swipes ask the parent page to hide its own
+  // docks first, and only then hide the exercise bar.
   //
-  //   swipe right  -> open our sidebar; if it is already open, the gesture
-  //                   belongs to the parent page's dock (forwarded)
-  //   swipe left   -> close our sidebar first, forward only once it is closed
-  //   swipe up/down from the bottom edge -> show / hide the output drawer
+  //   swipe right  -> open our sidebar; if it is already open, ask the parent
+  //   swipe left   -> ask the parent to hide its dock first, then hide ours
+  //   swipe up/down from the bottom hotspot -> show / hide the output drawer
   //
-  // Precedence matters: this app's own panes always move before the site dock,
-  // otherwise a student swiping to reach the exercise list gets the site menu.
   const SWIPE_MIN = 60;        // px of travel needed to count as a swipe
   const SWIPE_SLOP = 40;       // max drift on the other axis before we let go
-  const BOTTOM_ZONE = 70;      // px above the bottom edge that starts a drawer pull
+  const LEFT_ZONE = 120;       // px from the left edge for the sidebar hotspot
+  const LEFT_TOP = 0.18;       // keep the hotspot in the middle-left, off the corners
+  const LEFT_BOTTOM = 0.82;
+  const BOTTOM_ZONE = 90;      // px above the bottom edge that starts a drawer pull
+  const BOTTOM_LEFT = 0.18;    // keep the drawer hotspot in the bottom middle
+  const BOTTOM_RIGHT = 0.82;
   const OUTPUT_KEY = 'py_output_open';
+  const PARENT_SWIPE_TIMEOUT = 250;
 
   function isNarrow() { return window.matchMedia('(max-width: 700px)').matches; }
+
+  function inMidLeftZone(start) {
+    return start.x <= LEFT_ZONE
+      && start.y >= window.innerHeight * LEFT_TOP
+      && start.y <= window.innerHeight * LEFT_BOTTOM;
+  }
+
+  function inMidBottomZone(start) {
+    return window.innerHeight - start.y <= BOTTOM_ZONE
+      && start.x >= window.innerWidth * BOTTOM_LEFT
+      && start.x <= window.innerWidth * BOTTOM_RIGHT;
+  }
 
   function setSidebarOpen(open) {
     document.body.classList.toggle('sidebar-open', open);
@@ -262,13 +280,39 @@
 
   // --- Swipes -------------------------------------------------------------
   let touchStart = null;
-  // When this page is embedded in the site, a gesture it has nothing left to do
-  // with belongs to the parent, which uses it to reveal its own left bars. A
-  // cross-origin parent cannot read this frame's touch events, so forward them.
-  function forwardSwipe(dir) {
-    if (window.parent === window) return;
-    try { window.parent.postMessage({ type: 'tinmarino-swipe', dir: dir }, '*'); }
-    catch { /* nothing we can do */ }
+  let parentSwipeSeq = 0;
+
+  // Same-origin parents can attach touch listeners directly inside this frame,
+  // and cross-origin ones cannot. Ask the parent explicitly instead, wait for a
+  // yes/no answer, and fall back to our own bar only when the parent says it had
+  // nothing left to hide.
+  function requestParentSwipe(dir) {
+    if (window.parent === window) return Promise.resolve(false);
+    const requestId = 'classroom-' + (++parentSwipeSeq);
+    return new Promise(resolve => {
+      let done = false;
+      const finish = handled => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve(handled);
+      };
+      const onMessage = event => {
+        const data = event.data;
+        if (!data || data.type !== 'tinmarino-swipe-result' || data.requestId !== requestId) {
+          return;
+        }
+        finish(!!data.handled);
+      };
+      const timer = setTimeout(() => finish(false), PARENT_SWIPE_TIMEOUT);
+      window.addEventListener('message', onMessage);
+      try {
+        window.parent.postMessage({ type: 'tinmarino-swipe-request', dir: dir, requestId: requestId }, '*');
+      } catch {
+        finish(false);
+      }
+    });
   }
 
   document.addEventListener('touchstart', e => {
@@ -277,7 +321,7 @@
     touchStart = { x: t.clientX, y: t.clientY, target: e.target };
   }, { passive: true });
 
-  document.addEventListener('touchend', e => {
+  document.addEventListener('touchend', async e => {
     if (!touchStart) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.x;
@@ -290,28 +334,39 @@
     // is scrolling — the editor's above all — and must be left alone.
     if (Math.abs(dy) > SWIPE_MIN && Math.abs(dx) < SWIPE_SLOP) {
       if (!isNarrow()) return;
-      const fromBottom = window.innerHeight - start.y <= BOTTOM_ZONE;
+      const fromBottom = inMidBottomZone(start);
       const inDrawer = $outputArea.contains(start.target) || $splitterY.contains(start.target);
-      if (dy < 0 && (fromBottom || inDrawer) && !outputOpen()) setOutputOpen(true);
-      else if (dy > 0 && inDrawer && outputOpen()) setOutputOpen(false);
+      if (!fromBottom && !inDrawer) return;
+      e.stopImmediatePropagation();
+      if (dy < 0 && !outputOpen()) setOutputOpen(true);
+      else if (dy > 0 && outputOpen()) setOutputOpen(false);
       return;
     }
 
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
+    e.stopImmediatePropagation();
 
-    // On a wide screen this page has no overlay sidebar to move, so every
-    // horizontal swipe is the parent's business.
-    if (!isNarrow()) { forwardSwipe(dx > 0 ? 'right' : 'left'); return; }
+    const fromLeft = inMidLeftZone(start) || $sidebar.contains(start.target);
+    if (!fromLeft) return;
+
+    // On a wide screen this page has no overlay sidebar to move, so the hotspot
+    // gestures simply belong to the parent page.
+    if (!isNarrow()) {
+      await requestParentSwipe(dx > 0 ? 'right' : 'left');
+      return;
+    }
 
     const open = document.body.classList.contains('sidebar-open');
     if (dx > 0) {
-      // Our own exercise pane first, from anywhere on the screen; the dock only
-      // gets the gesture once we have nothing left to reveal.
       if (!open) setSidebarOpen(true);
-      else forwardSwipe('right');
+      else await requestParentSwipe('right');
     } else {
-      if (open) setSidebarOpen(false);
-      else forwardSwipe('left');
+      if (open) {
+        const handled = await requestParentSwipe('left');
+        if (!handled) setSidebarOpen(false);
+      } else {
+        await requestParentSwipe('left');
+      }
     }
   }, { passive: true });
 
@@ -689,7 +744,7 @@
       span.innerHTML = '<span class="tb-prompt">' + esc(m[1] || '') + '</span>'
         + highlightPy(m[2]) + '\n';
     } else if (kind === 'error') {
-      span.innerHTML = text.split('\n').map(renderPyLine).join('\n') + '\n';
+      span.innerHTML = simplifyTracebacks(text).split('\n').map(renderPyLine).join('\n') + '\n';
     } else {
       span.textContent = text + '\n';
     }
@@ -1082,7 +1137,7 @@
   // happened) and remote code only fills gaps. Local edits are never
   // clobbered, because the student may be halfway through an exercise.
   async function pullProgress(announce) {
-    const remote = await Sync.loadLatest();
+    const remote = await withAutoLogin(() => Sync.loadLatest());
     if (!remote) {
       if (announce) setSyncNote('Nothing submitted yet for ' + currentUser() + '.');
       return { restored: 0, marked: 0, found: false };
@@ -1140,7 +1195,7 @@
     switchTab('console');
     appendConsole('Loading your submission history...', 'help');
     try {
-      const items = await Sync.listSubmissions();
+      const items = await withAutoLogin(() => Sync.listSubmissions());
       if (!items.length) { appendConsole('No submissions yet.', 'help'); return; }
       appendConsole(items.length + ' submission(s), newest first:', 'help');
       items.slice(0, 40).forEach(item => {
@@ -1174,7 +1229,7 @@
 
     $btnPush.disabled = true;
     try {
-      const record = await Sync.submit(progress);
+      const record = await withAutoLogin(() => Sync.submit(progress));
       setSyncNote('Submitted at ' + record.savedAt.slice(0, 16).replace('T', ' ') + '.');
     } catch (err) {
       setSyncNote('Submit failed: ' + err.message);
@@ -1190,13 +1245,74 @@
   // password before it hands out any token.
   let pendingChallenge = null;
 
+  function reflectLoginState() {
+    const loggedIn = isLoggedIn();
+    $btnPush.disabled = !loggedIn;
+    $btnHistory.disabled = !loggedIn;
+    $btnLogin.textContent = loggedIn ? 'Logout' : 'Login';
+  }
+
+  function maybeForgetRememberedLogin(err) {
+    if (!err || !err.type || !Sync.forgetRememberedLogin) return;
+    if (err.type === 'NotAuthorizedException'
+        || err.type === 'UserNotFoundException'
+        || err.type === 'PasswordResetRequiredException') {
+      Sync.forgetRememberedLogin();
+    }
+  }
+
+  function shouldRetryWithCookie(err) {
+    if (!Sync.rememberedLogin || !Sync.rememberedLogin()) return false;
+    const message = (err && err.message) || '';
+    return !!err.type || message === 'Not logged in.' || message === 'Session expired. Log in again.';
+  }
+
+  async function withAutoLogin(work) {
+    try {
+      return await work();
+    } catch (err) {
+      if (!shouldRetryWithCookie(err)) throw err;
+      const ok = await tryAutoLogin(true);
+      if (!ok) throw err;
+      return work();
+    }
+  }
+
+  async function tryAutoLogin(force) {
+    if (!syncAvailable() || !Sync.rememberedLogin) return false;
+    const remembered = Sync.rememberedLogin();
+    if (!remembered || !remembered.username || !remembered.password) return false;
+    if (isLoggedIn()) {
+      if (!force) return false;
+      if (Sync.dropSession) Sync.dropSession();
+      reflectLoginState();
+    }
+    try {
+      const res = await Sync.login(remembered.username, remembered.password);
+      if (res.status !== 'ok') {
+        if (Sync.forgetRememberedLogin) Sync.forgetRememberedLogin();
+        return false;
+      }
+      reflectLoginState();
+      refreshStatus();
+      return true;
+    } catch (err) {
+      maybeForgetRememberedLogin(err);
+      return false;
+    }
+  }
+
   function showLogin() {
     if (!syncAvailable()) { setSyncNote(SYNC_MISSING); return; }
     $loginModal.classList.remove('hidden');
     $loginError.textContent = '';
     showNewPasswordField(false);
-    $loginUser.value = currentUser() || '';
-    $loginUser.focus();
+    const remembered = Sync.rememberedLogin ? Sync.rememberedLogin() : null;
+    $loginUser.value = currentUser() || (remembered ? remembered.username : '') || '';
+    $loginPass.value = remembered ? remembered.password : '';
+    if ($loginUser.value && !$loginPass.value) $loginPass.focus();
+    else if ($loginUser.value && $loginPass.value) $loginPass.focus();
+    else $loginUser.focus();
   }
   function hideLogin() {
     $loginModal.classList.add('hidden');
@@ -1245,9 +1361,7 @@
   }
 
   async function afterLogin() {
-    $btnPush.disabled = false;
-    $btnHistory.disabled = false;
-    $btnLogin.textContent = 'Logout';
+    reflectLoginState();
     refreshStatus();
     try {
       await pullProgress(true);
@@ -1259,9 +1373,7 @@
 
   function handleLogout() {
     Sync.logout();
-    $btnPush.disabled = true;
-    $btnHistory.disabled = true;
-    $btnLogin.textContent = 'Login';
+    reflectLoginState();
     setSyncNote('Logged out. Your work stays in this browser.');
   }
 
@@ -1375,16 +1487,17 @@
   // A login is optional: without one everything still runs, checks, marks
   // exercises green, and downloads. Only Submit and History need it.
   Sync.restore();
+  const bootLogin = syncAvailable() && !isLoggedIn()
+    ? tryAutoLogin()
+    : Promise.resolve(isLoggedIn());
   if (!syncAvailable()) {
     // No cloud on this deployment: say so on the buttons, once
     $btnLogin.disabled = true;
     $btnLogin.title = SYNC_MISSING;
     $btnPush.title = SYNC_MISSING;
     $btnHistory.title = SYNC_MISSING;
-  } else if (isLoggedIn()) {
-    $btnPush.disabled = false;
-    $btnHistory.disabled = false;
-    $btnLogin.textContent = 'Logout';
+  } else {
+    reflectLoginState();
   }
 
   // === Boot ===
@@ -1393,8 +1506,10 @@
   migrateLegacyKeys();
   initWorker();
   loadManifest().then(async () => {
+    await bootLogin;
     refreshStatus();
-    // Already logged in from a previous visit: bring the work back quietly
+    // Already logged in from a previous visit, or auto-logged in from the
+    // remembered cookie: bring the work back quietly.
     if (!syncAvailable() || !isLoggedIn()) return;
     try { await pullProgress(false); }
     catch (err) {

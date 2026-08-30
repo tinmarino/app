@@ -630,7 +630,7 @@ button#btn-stop.urgent { animation: stop-pulse 0.9s ease-in-out infinite; }
   /* Toolbar buttons that only matter with a mouse or a big screen */
   #toolbar button { min-height: 34px; }
 
-  /* --- Bottom dock: collapsed by default, swipe up from the bottom edge --- */
+  /* --- Bottom dock: collapsed by default, swipe up from the bottom-middle hotspot --- */
   #splitter-y {
     height: 22px;
     display: flex;

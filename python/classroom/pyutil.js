@@ -22,6 +22,71 @@
     return esc(code);
   }
 
+  const TRACEBACK_HEAD_RE = /^Traceback \(most recent call last\):$/;
+  const TRACEBACK_FRAME_RE = /^(\s*)File "(.*?)", line (\d+)(?:, in (.*))?$/;
+  const TRACEBACK_FINAL_RE = /^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Warning|Exit))(:\s?)([\s\S]*)$/;
+
+  function isInternalTracebackFile(file) {
+    return file.startsWith('/lib/python') || file.includes('/_pyodide/') || file.startsWith('<frozen ');
+  }
+
+  // Pyodide often prepends one or two runtime frames before the student's own
+  // frame. Drop only that leading prefix, without depending on exact line
+  // numbers or file offsets, and keep the rest of the traceback untouched.
+  function simplifyTracebackBlock(lines) {
+    if (!lines.length || !TRACEBACK_HEAD_RE.test(lines[0])) return lines;
+
+    const frames = [];
+    let index = 1;
+    while (index < lines.length) {
+      const match = lines[index].match(TRACEBACK_FRAME_RE);
+      if (!match) break;
+      const frame = { file: match[2], lines: [lines[index]] };
+      index += 1;
+      while (index < lines.length) {
+        const line = lines[index];
+        if (TRACEBACK_FRAME_RE.test(line) || TRACEBACK_FINAL_RE.test(line)) break;
+        frame.lines.push(line);
+        index += 1;
+      }
+      frames.push(frame);
+    }
+
+    let firstStudent = 0;
+    while (firstStudent < frames.length && isInternalTracebackFile(frames[firstStudent].file)) {
+      firstStudent += 1;
+    }
+    if (firstStudent === 0 || firstStudent === frames.length) return lines;
+
+    return [
+      lines[0],
+      ...frames.slice(firstStudent).flatMap(frame => frame.lines),
+      ...lines.slice(index)
+    ];
+  }
+
+  function simplifyTracebacks(text) {
+    if (!text || !text.includes('Traceback (most recent call last):')) return text;
+    const lines = text.split('\n');
+    const out = [];
+    let index = 0;
+
+    while (index < lines.length) {
+      if (!TRACEBACK_HEAD_RE.test(lines[index])) {
+        out.push(lines[index]);
+        index += 1;
+        continue;
+      }
+
+      let next = index + 1;
+      while (next < lines.length && !TRACEBACK_HEAD_RE.test(lines[next])) next += 1;
+      out.push(...simplifyTracebackBlock(lines.slice(index, next)));
+      index = next;
+    }
+
+    return out.join('\n');
+  }
+
   function renderPyLine(line) {
     let m;
 
@@ -37,7 +102,7 @@
     }
 
     //   File "/path/to.py", line 12, in func
-    if ((m = line.match(/^(\s*)File "(.*?)", line (\d+)(?:, in (.*))?$/))) {
+    if ((m = line.match(TRACEBACK_FRAME_RE))) {
       return m[1] + '<span class="tb-kw">File </span>'
         + '<span class="tb-file">"' + esc(m[2]) + '"</span>'
         + '<span class="tb-kw">, line </span><span class="tb-line">' + m[3] + '</span>'
@@ -55,7 +120,7 @@
     }
 
     // ExceptionName: message   (at column 0, this is the final line)
-    if ((m = line.match(/^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Warning|Exit))(:\s?)([\s\S]*)$/))) {
+    if ((m = line.match(TRACEBACK_FINAL_RE))) {
       return '<span class="tb-exc">' + esc(m[1]) + '</span>'
         + '<span class="tb-kw">' + esc(m[2]) + '</span>'
         + '<span class="tb-msg">' + esc(m[3]) + '</span>';
@@ -74,7 +139,7 @@
   // marked up line by line.
   function renderOutput(el, text) {
     if (!text) { el.textContent = ''; return; }
-    el.innerHTML = text.split('\n').map(renderPyLine).join('\n');
+    el.innerHTML = simplifyTracebacks(text).split('\n').map(renderPyLine).join('\n');
   }
 
   // === Python smart indentation ==========================================
@@ -184,7 +249,7 @@
 
 
   global.PyUtil = {
-    esc, highlightPy, renderPyLine, renderOutput,
+    esc, highlightPy, renderPyLine, renderOutput, simplifyTracebacks,
     INDENT, INDENT_N, stripLiterals, bracketDepth, indentAfter,
     smartNewline, smartBackspace
   };

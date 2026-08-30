@@ -9,7 +9,7 @@
   'use strict';
 
   const {
-    esc, highlightPy, renderPyLine,
+    esc, highlightPy, renderPyLine, simplifyTracebacks,
     INDENT, INDENT_N, stripLiterals, bracketDepth, indentAfter,
     smartNewline, smartBackspace
   } = window.PyUtil;
@@ -40,7 +40,7 @@
       const m = text.match(/^(>>> |\.\.\. )?([\s\S]*)$/);
       span.innerHTML = '<span class="tb-prompt">' + esc(m[1] || '') + '</span>' + highlightPy(m[2]);
     } else if (kind === 'error') {
-      span.innerHTML = text.split('\n').map(renderPyLine).join('\n');
+      span.innerHTML = simplifyTracebacks(text).split('\n').map(renderPyLine).join('\n');
     } else {
       span.textContent = text;
     }
@@ -356,6 +356,7 @@
     const dy = t.clientY - touchStart.y;
     touchStart = null;
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
+    e.stopImmediatePropagation();
     try {
       window.parent.postMessage(
         { type: 'tinmarino-swipe', dir: dx > 0 ? 'right' : 'left' }, '*');
