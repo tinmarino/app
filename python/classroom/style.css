@@ -15,6 +15,10 @@
 body {
   display: flex;
   height: 100vh;
+  /* dvh follows the visible viewport as the phone's browser chrome and the
+     on-screen keyboard come and go, so the bottom run-bar and output drawer are
+     never left under the browser toolbar. Falls back to vh where unsupported. */
+  height: 100dvh;
   overflow: hidden;
   font-family: 'Droid Sans', 'Segoe UI', sans-serif;
   font-size: 15px;

@@ -37,6 +37,15 @@
   // memory. The user also asked for a convenience cookie keeping the login name
   // and password so the page can sign back in automatically after a long pause.
   // That cookie is for speed, not for secrecy.
+  //
+  // SECURITY NOTE — the password is stored in CLEARTEXT in a JS-readable cookie.
+  // This is strictly weaker than the refresh-token-only scheme it replaces: any
+  // XSS on the /app/python/classroom/ path can exfiltrate it, and students who
+  // reuse passwords across sites are exposed. It is acceptable here only because
+  // the passwords are teacher-assigned throwaway credentials scoped to this
+  // classroom, and the cookie is SameSite=Lax, path-restricted, and Secure on
+  // HTTPS. If the app ever handles real credentials, replace this with a
+  // refresh-token cookie or a server-side session.
   const STORE_KEY = 'py_classroom_session';
   const LOGIN_COOKIE = 'py_classroom_login';
   const LOGIN_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;

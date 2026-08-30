@@ -208,7 +208,7 @@
   //
   const SWIPE_MIN = 60;        // px of travel needed to count as a swipe
   const SWIPE_SLOP = 40;       // max drift on the other axis before we let go
-  const LEFT_ZONE = 120;       // px from the left edge for the sidebar hotspot
+  const LEFT_ZONE = 60;        // px from the left edge for the sidebar hotspot
   const LEFT_TOP = 0.18;       // keep the hotspot in the middle-left, off the corners
   const LEFT_BOTTOM = 0.82;
   const BOTTOM_ZONE = 90;      // px above the bottom edge that starts a drawer pull
@@ -299,6 +299,8 @@
         resolve(handled);
       };
       const onMessage = event => {
+        // Only trust messages from our own origin (the parent page)
+        if (event.origin !== location.origin) return;
         const data = event.data;
         if (!data || data.type !== 'tinmarino-swipe-result' || data.requestId !== requestId) {
           return;
@@ -308,7 +310,7 @@
       const timer = setTimeout(() => finish(false), PARENT_SWIPE_TIMEOUT);
       window.addEventListener('message', onMessage);
       try {
-        window.parent.postMessage({ type: 'tinmarino-swipe-request', dir: dir, requestId: requestId }, '*');
+        window.parent.postMessage({ type: 'tinmarino-swipe-request', dir: dir, requestId: requestId }, location.origin);
       } catch {
         finish(false);
       }
@@ -344,10 +346,16 @@
     }
 
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
-    e.stopImmediatePropagation();
 
     const fromLeft = inMidLeftZone(start) || $sidebar.contains(start.target);
-    if (!fromLeft) return;
+    const open = document.body.classList.contains('sidebar-open');
+    // When the sidebar is open, a left swipe from anywhere should be able to
+    // close it (or close the parent's dock first). The zone restriction only
+    // applies when the sidebar is closed and we need a deliberate gesture.
+    if (!fromLeft && !open) return;
+    // Only stop propagation once we know this gesture belongs to us, so swipes
+    // outside the hotspot still reach the parent's addToFrame listener.
+    e.stopImmediatePropagation();
 
     // On a wide screen this page has no overlay sidebar to move, so the hotspot
     // gestures simply belong to the parent page.
@@ -356,8 +364,9 @@
       return;
     }
 
-    const open = document.body.classList.contains('sidebar-open');
     if (dx > 0) {
+      // Right swipe: only from the hotspot or inside the sidebar
+      if (!fromLeft) return;
       if (!open) setSidebarOpen(true);
       else await requestParentSwipe('right');
     } else {
@@ -1264,7 +1273,12 @@
   function shouldRetryWithCookie(err) {
     if (!Sync.rememberedLogin || !Sync.rememberedLogin()) return false;
     const message = (err && err.message) || '';
-    return !!err.type || message === 'Not logged in.' || message === 'Session expired. Log in again.';
+    const type = (err && err.type) || '';
+    // Only retry on authentication / session errors, not on transient AWS issues
+    return type === 'NotAuthorizedException'
+      || type === 'ExpiredTokenException'
+      || message === 'Not logged in.'
+      || message === 'Session expired. Log in again.';
   }
 
   async function withAutoLogin(work) {
@@ -1310,8 +1324,7 @@
     const remembered = Sync.rememberedLogin ? Sync.rememberedLogin() : null;
     $loginUser.value = currentUser() || (remembered ? remembered.username : '') || '';
     $loginPass.value = remembered ? remembered.password : '';
-    if ($loginUser.value && !$loginPass.value) $loginPass.focus();
-    else if ($loginUser.value && $loginPass.value) $loginPass.focus();
+    if ($loginUser.value) $loginPass.focus();
     else $loginUser.focus();
   }
   function hideLogin() {
