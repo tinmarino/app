@@ -8,6 +8,10 @@
 (function () {
   'use strict';
 
+  // Tell an embedding parent page (index.html) that this frame forwards its own
+  // swipes by postMessage, so it must not also inject touch listeners here.
+  window.__tinSwipeSelfManaged = true;
+
   const {
     esc, highlightPy, renderPyLine, simplifyTracebacks,
     INDENT, INDENT_N, stripLiterals, bracketDepth, indentAfter,

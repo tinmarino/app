@@ -4,6 +4,11 @@
 (function () {
   'use strict';
 
+  // Tell an embedding parent page (index.html) that this frame handles its own
+  // swipes and forwards the rest by postMessage, so it must not also inject its
+  // own touch listeners here -- otherwise every swipe would fire twice.
+  window.__tinSwipeSelfManaged = true;
+
   // === Configuration ===
   // Vendored Pyodide lives next to this file (same origin, no CORS)
   // NOTE: the 3.14 build dropped classic-worker support -> use the ESM entry point
@@ -197,10 +202,10 @@
 
   // === Mobile gestures ====================================================
   // On a narrow screen the sidebar is an overlay and the output area is a
-  // drawer, so the editor keeps the screen. The gesture hot zones sit away
-  // from Android's own edge swipes: mid-left for the exercise bar, mid-bottom
-  // for the output drawer. Left swipes ask the parent page to hide its own
-  // docks first, and only then hide the exercise bar.
+  // drawer, so the editor keeps the screen. A swipe to open the sidebar may
+  // start anywhere in the left half (so it clears Android's own back-gesture at
+  // the very edge); the output drawer keeps a mid-bottom pull zone. Left swipes
+  // ask the parent page to hide its own docks first, and only then hide ours.
   //
   //   swipe right  -> open our sidebar; if it is already open, ask the parent
   //   swipe left   -> ask the parent to hide its dock first, then hide ours
@@ -208,9 +213,7 @@
   //
   const SWIPE_MIN = 60;        // px of travel needed to count as a swipe
   const SWIPE_SLOP = 40;       // max drift on the other axis before we let go
-  const LEFT_ZONE = 60;        // px from the left edge for the sidebar hotspot
-  const LEFT_TOP = 0.18;       // keep the hotspot in the middle-left, off the corners
-  const LEFT_BOTTOM = 0.82;
+  const LEFT_FRACTION = 0.5;   // a swipe to open may start in the whole left half
   const BOTTOM_ZONE = 90;      // px above the bottom edge that starts a drawer pull
   const BOTTOM_LEFT = 0.18;    // keep the drawer hotspot in the bottom middle
   const BOTTOM_RIGHT = 0.82;
@@ -219,10 +222,12 @@
 
   function isNarrow() { return window.matchMedia('(max-width: 700px), (max-height: 500px)').matches; }
 
-  function inMidLeftZone(start) {
-    return start.x <= LEFT_ZONE
-      && start.y >= window.innerHeight * LEFT_TOP
-      && start.y <= window.innerHeight * LEFT_BOTTOM;
+  // A swipe that opens the sidebar may start anywhere in the left half of the
+  // screen. The old build only listened to a 60px strip at the very edge, which
+  // on Android sits under the OS back-gesture and so was effectively unreachable
+  // -- that is why swiping "did not work at all".
+  function inOpenZone(start) {
+    return start.x <= window.innerWidth * LEFT_FRACTION;
   }
 
   function inMidBottomZone(start) {
@@ -360,14 +365,14 @@
 
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
 
-    const fromLeft = inMidLeftZone(start) || $sidebar.contains(start.target);
+    const fromLeft = inOpenZone(start) || $sidebar.contains(start.target);
     const open = document.body.classList.contains('sidebar-open');
     // When the sidebar is open, a left swipe from anywhere should be able to
     // close it (or close the parent's dock first). The zone restriction only
     // applies when the sidebar is closed and we need a deliberate gesture.
     if (!fromLeft && !open) return;
-    // Only stop propagation once we know this gesture belongs to us, so swipes
-    // outside the hotspot still reach the parent's addToFrame listener.
+    // Once we know the gesture is ours, keep it from also reaching any other
+    // touch listener on the page.
     e.stopImmediatePropagation();
 
     // On a wide screen this page has no overlay sidebar to move, so the hotspot
@@ -378,7 +383,7 @@
     }
 
     if (dx > 0) {
-      // Right swipe: only from the hotspot or inside the sidebar
+      // Right swipe to reveal: start it in the left half (or on the sidebar).
       if (!fromLeft) return;
       if (!open) setSidebarOpen(true);
       else await requestParentSwipe('right');
