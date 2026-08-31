@@ -53,7 +53,6 @@
   const $btnRun = document.getElementById('btn-run');
   const $btnCheck = document.getElementById('btn-check');
   const $btnReset = document.getElementById('btn-reset');
-  const $btnConsole = document.getElementById('btn-console');
   const $btnLogin = document.getElementById('btn-login');
   const $btnPush = document.getElementById('btn-push');
   const $btnDownload = document.getElementById('btn-download');
@@ -738,13 +737,18 @@
       out += '--- FAIL ---\n' + result.error + '\n';
     } else {
       out += '--- ALL TESTS PASSED ---\n';
-      // Remember the code that actually passed, so Download/Submit report real
-      // work. Guarded: a quota or private-mode throw here must not abort before
-      // the pass is shown on screen.
+      // Remember the code that actually passed, so Download reports real work.
+      // Guarded: a quota or private-mode throw here must not abort before the
+      // pass is shown on screen.
+      const prevSolved = getSolved(currentExercise.id);
       try {
         localStorage.setItem(SOLVED_PREFIX + currentExercise.id, $editor.value);
         markDone(currentExercise.id);
       } catch (err) { console.warn('Could not save progress:', err); }
+      // A passing Check auto-submits the accepted answer -- there is no separate
+      // Submit button. Only when logged in, and only when the passing code is
+      // new or changed, so re-checking the same solution does not spam the trail.
+      if (isLoggedIn() && $editor.value !== prevSolved) { pushProgress(); }
     }
     renderOutput($testsOutput, out);
   }
@@ -1343,7 +1347,7 @@
     });
     progress.markdown = buildMarkdown();
 
-    $btnPush.disabled = true;
+    if ($btnPush) $btnPush.disabled = true;
     try {
       const record = await withAutoLogin(() => Sync.submit(progress));
       setSyncNote('Submitted at ' + record.savedAt.slice(0, 16).replace('T', ' ') + '.');
@@ -1351,7 +1355,7 @@
       setSyncNote('Submit failed: ' + err.message);
       console.error(err);
     } finally {
-      $btnPush.disabled = !isLoggedIn();
+      if ($btnPush) $btnPush.disabled = !isLoggedIn();
     }
   }
 
@@ -1388,7 +1392,7 @@
 
   function reflectLoginState() {
     const loggedIn = isLoggedIn();
-    $btnPush.disabled = !loggedIn;
+    if ($btnPush) $btnPush.disabled = !loggedIn;
     $btnHistory.disabled = !loggedIn;
     $btnRestore.disabled = !loggedIn;
     $btnLogin.textContent = loggedIn ? 'Logout' : 'Login';
@@ -1532,7 +1536,6 @@
   $btnRun.addEventListener('click', runCode);
   $btnCheck.addEventListener('click', checkCode);
   $btnReset.addEventListener('click', resetCode);
-  $btnConsole.addEventListener('click', () => switchTab('console'));
   $btnDownload.addEventListener('click', downloadMarkdown);
   $btnStop.addEventListener('click', stopRuntime);
 
@@ -1590,7 +1593,6 @@
     if (isLoggedIn()) handleLogout(); else showLogin();
   });
   $btnHistory.addEventListener('click', showHistory);
-  $btnPush.addEventListener('click', pushProgress);
   $btnRestore.addEventListener('click', forceRestore);
   $loginOk.addEventListener('click', handleLogin);
   $loginCancel.addEventListener('click', hideLogin);
@@ -1645,7 +1647,7 @@
     // No cloud on this deployment: say so on the buttons, once
     $btnLogin.disabled = true;
     $btnLogin.title = SYNC_MISSING;
-    $btnPush.title = SYNC_MISSING;
+    if ($btnPush) $btnPush.title = SYNC_MISSING;
     $btnHistory.title = SYNC_MISSING;
     $btnRestore.title = SYNC_MISSING;
   } else {
