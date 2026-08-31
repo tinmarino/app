@@ -13,7 +13,7 @@
  *   SigV4-signed S3 requests with x-amz-security-token
  *
  * Layout in the bucket, one object per submission so the history is kept:
- *   <identityId>/latest.json                        the state to restore from
+ *   <identityId>/latest-class-01.json               the state to restore from
  *   <identityId>/submissions/<iso>-<exercise>.json  an append-only trail
  *
  * The identityId is stable per *username*, not per browser, which is what
@@ -27,6 +27,8 @@
   const CLIENT_ID        = '561nnmbcf87pdkbjj2jjqnnff1';
   const IDENTITY_POOL_ID = 'us-east-1:60c59179-712c-4d75-8397-c5ff916040e0';
   const BUCKET           = 'python-exercices';
+  // Per-class state file, so a second class can add latest-class-02.json later.
+  const LATEST_KEY       = 'latest-class-01.json';
 
   const IDP_HOST      = 'cognito-idp.' + REGION + '.amazonaws.com';
   const IDENTITY_HOST = 'cognito-identity.' + REGION + '.amazonaws.com';
@@ -369,7 +371,7 @@
 
   // Save one answer as its own readable object, and refresh latest.json:
   //   <user>/<user>-<id>-<title>-<seq>-<status>.py    (the code)
-  //   <user>/latest.json                              (the full state)
+  //   <user>/latest-class-01.json                     (the full state)
   async function submit(state) {
     const user = username();
     const record = { ...state, username: user, savedAt: new Date().toISOString() };
@@ -384,11 +386,11 @@
       await putText(prefix() + name, state.code);
     }
 
-    await putJson(prefix() + 'latest.json', record);
+    await putJson(prefix() + LATEST_KEY, record);
     return record;
   }
 
-    async function loadLatest() { return getJson(prefix() + 'latest.json'); }
+    async function loadLatest() { return getJson(prefix() + LATEST_KEY); }
   async function loadSubmission(key) { return getJson(key); }
 
   global.ClassroomSync = {
