@@ -76,6 +76,7 @@
   const $loginNew = document.getElementById('login-new');
   const $loginNewRow = document.getElementById('login-new-row');
   const $btnHistory = document.getElementById('btn-history');
+  const $btnRestore = document.getElementById('btn-restore');
 
   // === Shared helpers (pyutil.js) =========================================
   // Indentation and traceback colouring live in pyutil.js so the standalone
@@ -417,32 +418,49 @@
     applyOutputDefault();
   });
 
-  // === Zoom = code font size ==============================================
-  // The viewport is locked (see index.html), so a pinch cannot scale the page.
-  // It resizes the code instead, which is what anyone pinching a code editor
-  // on a phone actually wants. Ctrl+wheel does the same with a mouse.
-  const FONT_KEY = 'py_code_font';
+  // === Zoom = per-pane text size ==========================================
+  // The page never scales (viewport locked). Pinch, Ctrl+wheel and Ctrl+/-
+  // resize the TEXT of the pane under the gesture, and only that pane: the code
+  // editor, the exercise list, or the output dock. Each keeps its own size.
   const FONT_MIN = 9;
   const FONT_MAX = 34;
-  const FONT_DFLT = 14;
   const $zoomBadge = document.getElementById('zoom-badge');
   let badgeTimer = null;
 
-  let codeFont = parseFloat(localStorage.getItem(FONT_KEY));
-  if (isNaN(codeFont)) codeFont = FONT_DFLT;
+  const ZOOM = {
+    code: { varName: '--code-font', key: 'py_code_font', dflt: 14, value: 14 },
+    list: { varName: '--list-font', key: 'py_list_font', dflt: 15, value: 15 },
+    dock: { varName: '--dock-font', key: 'py_dock_font', dflt: 13, value: 13 },
+  };
+  const NAME = { code: 'code', list: 'list', dock: 'output' };
 
-  function setCodeFont(px, announce) {
-    codeFont = Math.max(FONT_MIN, Math.min(FONT_MAX, px));
-    document.documentElement.style.setProperty('--code-font', codeFont.toFixed(1) + 'px');
-    try { localStorage.setItem(FONT_KEY, String(codeFont)); } catch { /* private mode */ }
-    syncScroll();
+  function setFont(scope, px, announce) {
+    const z = ZOOM[scope];
+    z.value = Math.max(FONT_MIN, Math.min(FONT_MAX, px));
+    document.documentElement.style.setProperty(z.varName, z.value.toFixed(1) + 'px');
+    try { localStorage.setItem(z.key, String(z.value)); } catch { /* private mode */ }
+    if (scope === 'code') syncScroll();      // keep the highlight layer aligned
     if (!announce) return;
-    $zoomBadge.textContent = Math.round(codeFont) + ' px';
+    $zoomBadge.textContent = NAME[scope] + ' ' + Math.round(z.value) + ' px';
     $zoomBadge.classList.remove('hidden');
     clearTimeout(badgeTimer);
     badgeTimer = setTimeout(() => $zoomBadge.classList.add('hidden'), 700);
   }
-  setCodeFont(codeFont, false);
+
+  // Restore each pane's saved size (or its default).
+  for (const scope of Object.keys(ZOOM)) {
+    const saved = parseFloat(localStorage.getItem(ZOOM[scope].key));
+    setFont(scope, isNaN(saved) ? ZOOM[scope].dflt : saved, false);
+  }
+
+  // Which pane a gesture belongs to, from the element it landed on.
+  function zoomScope(target) {
+    if (target && target.closest) {
+      if (target.closest('#sidebar')) return 'list';
+      if (target.closest('#output-area') || target.closest('#splitter-y')) return 'dock';
+    }
+    return 'code';
+  }
 
   function pinchDistance(touches) {
     const dx = touches[0].clientX - touches[1].clientX;
@@ -454,7 +472,11 @@
   document.addEventListener('touchstart', e => {
     if (e.touches.length !== 2) { pinch = null; return; }
     touchStart = null;                     // a two-finger gesture is never a swipe
-    pinch = { dist: pinchDistance(e.touches), font: codeFont };
+    // Pick the pane from the midpoint between the fingers.
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const scope = zoomScope(document.elementFromPoint(mx, my) || e.target);
+    pinch = { dist: pinchDistance(e.touches), scope, font: ZOOM[scope].value };
   }, { passive: true });
 
   // Not passive: a two-finger drag is ours, and on browsers that still offer
@@ -464,7 +486,7 @@
     e.preventDefault();
     const dist = pinchDistance(e.touches);
     if (pinch.dist < 1) return;
-    setCodeFont(pinch.font * (dist / pinch.dist), true);
+    setFont(pinch.scope, pinch.font * (dist / pinch.dist), true);
   }, { passive: false });
 
   document.addEventListener('touchend', () => { if (pinch) pinch = null; }, { passive: true });
@@ -472,15 +494,17 @@
   document.addEventListener('wheel', e => {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    setCodeFont(codeFont + (e.deltaY < 0 ? 1 : -1), true);
+    const scope = zoomScope(e.target);
+    setFont(scope, ZOOM[scope].value + (e.deltaY < 0 ? 1 : -1), true);
   }, { passive: false });
 
-  // Ctrl+/Ctrl-/Ctrl+0, the shortcuts a browser would have handled
+  // Ctrl+/Ctrl-/Ctrl+0 on the pane that holds the keyboard focus.
   document.addEventListener('keydown', e => {
     if (!e.ctrlKey && !e.metaKey) return;
-    if (e.key === '+' || e.key === '=') { e.preventDefault(); setCodeFont(codeFont + 1, true); }
-    else if (e.key === '-') { e.preventDefault(); setCodeFont(codeFont - 1, true); }
-    else if (e.key === '0') { e.preventDefault(); setCodeFont(FONT_DFLT, true); }
+    const scope = zoomScope(document.activeElement);
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); setFont(scope, ZOOM[scope].value + 1, true); }
+    else if (e.key === '-') { e.preventDefault(); setFont(scope, ZOOM[scope].value - 1, true); }
+    else if (e.key === '0') { e.preventDefault(); setFont(scope, ZOOM[scope].dflt, true); }
   });
 
   // === Tabs ===
@@ -1093,6 +1117,18 @@
     refreshStatus();
   }
 
+  // Wipe every trace of local progress for this exercise set: the done list
+  // and all saved editor buffers, passing code, and run-args. Used before a
+  // force restore so one user's work never lingers under another user's login.
+  function clearLocalProgress() {
+    localStorage.removeItem(DONE_KEY);
+    Object.keys(localStorage)
+      .filter(key => key.startsWith(CODE_PREFIX)
+                  || key.startsWith(SOLVED_PREFIX)
+                  || key.startsWith(RUN_PREFIX))
+      .forEach(key => localStorage.removeItem(key));
+  }
+
   function getSolved(id) { return localStorage.getItem(SOLVED_PREFIX + id); }
 
   // Exercises that were completed AND whose passing code we still have
@@ -1189,27 +1225,42 @@
   // Merge policy: the done list is a union (a pass is a pass, wherever it
   // happened) and remote code only fills gaps. Local edits are never
   // clobbered, because the student may be halfway through an exercise.
-  async function pullProgress(announce) {
+  //
+  // `force` is the escape hatch behind the Restore button, and what an explicit
+  // login uses: it is a clean switch to the remote user. Local state is wiped
+  // first, then the last submitted version is laid down whole -- done list, code
+  // and editor -- so one user's work never lingers, or gets re-submitted, under
+  // another user's login. (A gap-fill sync, by contrast, keeps the union and
+  // never clobbers unsubmitted edits: same student, second device.)
+  async function pullProgress(announce, force) {
     const remote = await withAutoLogin(() => Sync.loadLatest());
     if (!remote) {
       if (announce) setSyncNote('Nothing submitted yet for ' + currentUser() + '.');
       return { restored: 0, marked: 0, found: false };
     }
 
+    // A force restore is a clean switch to the remote user: wipe local state
+    // first, so the previous login's done list and code are not carried over
+    // (and cannot be re-submitted under the new account). A gap-fill sync keeps
+    // the union, because there it is the same student on a second device.
+    if (force) clearLocalProgress();
+
     let restored = 0;
     const localDone = getDoneList();
-    const merged = [...new Set([...localDone, ...(remote.done || [])])];
+    const merged = force
+      ? (remote.done || [])
+      : [...new Set([...localDone, ...(remote.done || [])])];
     const marked = merged.length - localDone.length;
     localStorage.setItem(DONE_KEY, JSON.stringify(merged));
 
     Object.entries(remote.solved || {}).forEach(([id, code]) => {
-      if (!localStorage.getItem(SOLVED_PREFIX + id)) {
+      if (force || !localStorage.getItem(SOLVED_PREFIX + id)) {
         localStorage.setItem(SOLVED_PREFIX + id, code);
         restored++;
       }
     });
     Object.entries(remote.exercises || {}).forEach(([id, code]) => {
-      if (!localStorage.getItem(CODE_PREFIX + id)) {
+      if (force || !localStorage.getItem(CODE_PREFIX + id)) {
         localStorage.setItem(CODE_PREFIX + id, code);
       }
     });
@@ -1219,8 +1270,13 @@
     // If the open exercise just gained code, show it instead of the template
     if (currentExercise && currentExercise._parsed) {
       const saved = localStorage.getItem(CODE_PREFIX + currentExercise.id);
-      if (saved && $editor.value === currentExercise._parsed.template) {
+      if (saved && (force || $editor.value === currentExercise._parsed.template)) {
         $editor.value = saved;
+        repaint();
+      } else if (force && !saved) {
+        // Clean switch and the new user has nothing here: drop the stale buffer
+        // back to the template rather than leave the old user's code on screen.
+        $editor.value = currentExercise._parsed.template;
         repaint();
       }
     }
@@ -1292,6 +1348,31 @@
     }
   }
 
+  // === Force restore =====================================================
+  // pullProgress() only fills gaps, so once an exercise has any local code it
+  // never pulls the submitted one again. Restore is the deliberate override:
+  // it overwrites this browser's code with the last submitted version. It is
+  // destructive to unsubmitted local edits, so it asks first.
+  async function forceRestore() {
+    if (!isLoggedIn()) { showLogin(); return; }
+    const ok = window.confirm(
+      'Force restore overwrites the code saved in THIS browser with your last '
+      + 'submitted version from the server. Any local edits you have not '
+      + 'submitted will be lost.\n\nContinue?');
+    if (!ok) return;
+
+    $btnRestore.disabled = true;
+    try {
+      const res = await pullProgress(true, true);
+      if (!res.found) setSyncNote('Nothing to restore for ' + currentUser() + '.');
+    } catch (err) {
+      setSyncNote('Restore failed: ' + err.message);
+      console.error(err);
+    } finally {
+      $btnRestore.disabled = !isLoggedIn();
+    }
+  }
+
   // === Login =============================================================
   // Two shapes: the normal one, and the first login of an account whose
   // password is still the shared class one, where Cognito demands a new
@@ -1302,6 +1383,7 @@
     const loggedIn = isLoggedIn();
     $btnPush.disabled = !loggedIn;
     $btnHistory.disabled = !loggedIn;
+    $btnRestore.disabled = !loggedIn;
     $btnLogin.textContent = loggedIn ? 'Logout' : 'Login';
   }
 
@@ -1417,11 +1499,15 @@
     }
   }
 
+  // An explicit login defaults to a force restore: you have just told the app
+  // who you are, so it brings your last submitted version down in full rather
+  // than only filling gaps. (The quiet auto-login at boot stays gap-only, so a
+  // reload never clobbers edits you have not submitted.)
   async function afterLogin() {
     reflectLoginState();
     refreshStatus();
     try {
-      await pullProgress(true);
+      await pullProgress(true, true);
     } catch (err) {
       setSyncNote('Could not read your submission: ' + err.message);
       console.error(err);
@@ -1498,6 +1584,7 @@
   });
   $btnHistory.addEventListener('click', showHistory);
   $btnPush.addEventListener('click', pushProgress);
+  $btnRestore.addEventListener('click', forceRestore);
   $loginOk.addEventListener('click', handleLogin);
   $loginCancel.addEventListener('click', hideLogin);
   $loginPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
@@ -1553,6 +1640,7 @@
     $btnLogin.title = SYNC_MISSING;
     $btnPush.title = SYNC_MISSING;
     $btnHistory.title = SYNC_MISSING;
+    $btnRestore.title = SYNC_MISSING;
   } else {
     reflectLoginState();
   }

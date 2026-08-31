@@ -4,10 +4,12 @@
    ============================================================ */
 
 :root {
-  /* Size of every code glyph in the app. Pinch-to-zoom on the editor and
-     Ctrl+wheel rewrite this on <html>; app.js persists it. Zooming must resize
-     the text, never the whole page, so a phone keeps its layout intact. */
-  --code-font: 14px;
+  /* Per-pane text size. Pinch-to-zoom, Ctrl+wheel and Ctrl+/- rewrite the
+     variable for the pane under the gesture (app.js persists each one). Zooming
+     resizes text only, never the whole page, so the layout stays put. */
+  --code-font: 14px;   /* the code editor (and the Run-with line)  */
+  --list-font: 15px;   /* the exercise list in the sidebar          */
+  --dock-font: 13px;   /* the output / tests / console dock         */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -50,6 +52,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 6px 0;
+  font-size: var(--list-font);
 }
 
 #exercise-list li {
@@ -78,6 +81,7 @@ body {
   padding: 10px 14px;
   border-top: 1px solid var(--gb-dark2);
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -251,7 +255,7 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   overflow-y: auto;
   padding: 8px 12px;
   font-family: 'Consolas', 'Fira Code', monospace;
-  font-size: calc(var(--code-font) - 1px);
+  font-size: var(--dock-font);
   background: var(--gb-dark0_hard);
 }
 .tab-content.active { display: flex; flex-direction: column; }
@@ -707,6 +711,12 @@ body { touch-action: manipulation; }
 #description-body,
 #console-history,
 .tab-content { overscroll-behavior: contain; }
+
+/* The sidebar and the dock scroll vertically but must not pinch-zoom the page:
+   a two-finger pinch there is ours, resizing that pane's own font (app.js). */
+#sidebar,
+#output-area,
+.tab-content { touch-action: pan-y; }
 
 /* Transient readout while pinching, e.g. "16 px" */
 #zoom-badge {
