@@ -423,7 +423,7 @@
   // resize the TEXT of the pane under the gesture, and only that pane: the code
   // editor, the exercise list, or the output dock. Each keeps its own size.
   const FONT_MIN = 9;
-  const FONT_MAX = 34;
+  const FONT_MAX = 100;
   const $zoomBadge = document.getElementById('zoom-badge');
   let badgeTimer = null;
 
@@ -439,7 +439,7 @@
     z.value = Math.max(FONT_MIN, Math.min(FONT_MAX, px));
     document.documentElement.style.setProperty(z.varName, z.value.toFixed(1) + 'px');
     try { localStorage.setItem(z.key, String(z.value)); } catch { /* private mode */ }
-    if (scope === 'code') syncScroll();      // keep the highlight layer aligned
+    if (scope === 'code') { syncScroll(); autoGrowRun(); }  // keep highlight aligned + grow Run-with
     if (!announce) return;
     $zoomBadge.textContent = NAME[scope] + ' ' + Math.round(z.value) + ' px';
     $zoomBadge.classList.remove('hidden');

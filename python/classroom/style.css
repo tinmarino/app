@@ -378,9 +378,26 @@ button#btn-download:hover:not(:disabled) { background: var(--gb-neutral_purple);
   cursor: col-resize;
 }
 #splitter-y {
-  height: 5px;
+  /* A visible grip on the web too (like the phone), so the output dock can be
+     dragged, and clicked to hide/show it -- when hidden only this bar remains. */
+  height: 14px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gb-dark1);
+  border-top: 1px solid var(--gb-dark2);
   cursor: row-resize;
 }
+#splitter-y::before {
+  content: '\2500\2500\2500\2500\2500';   /* grip dashes */
+  color: var(--gb-gray_245);
+  font-size: 0.9rem;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+/* Collapsed: an up-caret invites clicking / dragging it back open. */
+body.output-collapsed #splitter-y::before { content: '\2500\2500 \25B2 \2500\2500'; }
 
 /* --- Swipe-collapsed docked panels (wide layout) ---
    Swipe left/right hides/shows the exercise sidebar; swipe down/up hides/shows
