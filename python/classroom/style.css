@@ -165,6 +165,7 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
+  scrollbar-gutter: stable;
   box-sizing: border-box;
 }
 
@@ -194,6 +195,10 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   caret-color: var(--gb-light0);
   outline: none;
 }
+/* The textarea text is transparent (Prism paints the layer beneath), so the
+   placeholder needs its own opaque colour or it inherits transparent and the
+   "select an exercise" hint is invisible on some browsers. */
+#editor::placeholder { color: var(--gb-gray_245); opacity: 1; }
 /* The textarea's glyphs are transparent, so an opaque selection rect would
    hide the coloured layer underneath. Use a translucent highlight instead so
    the Prism-painted text stays readable through the selection. */
@@ -307,7 +312,7 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   border: 1px solid var(--gb-dark3);
   border-radius: 8px;
   padding: 24px;
-  width: 340px;
+  width: min(340px, calc(100vw - 24px));
 }
 .modal-content h3 { color: var(--gb-bright_purple); margin-bottom: 8px; }
 .modal-content label {
@@ -334,11 +339,6 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   justify-content: flex-end;
 }
 .error { color: var(--gb-bright_red); font-size: 0.85rem; margin-top: 8px; }
-
-/* Responsive */
-@media (max-width: 700px) {
-  #sidebar { width: 180px; min-width: 140px; }
-}
 
 /* Local-first status line: the app is fully usable without any login */
 #sync-status {
@@ -587,7 +587,7 @@ button#btn-stop.urgent { animation: stop-pulse 0.9s ease-in-out infinite; }
 /* ==========================================================================
    Phone layout: the sidebar becomes a swipe-in overlay
    ========================================================================== */
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) {
   #btn-menu { display: inline-block; padding: 4px 10px; font-size: 1.1rem; }
 
   #sidebar {

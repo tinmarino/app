@@ -74,7 +74,7 @@
       <div id="description-body" class="markdown"></div>
     </section>
     <pre id="editor-highlight" aria-hidden="true"><code class="language-python"></code></pre>
-    <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off"
+    <textarea id="editor" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
               placeholder="# Select an exercise from the left panel"></textarea>
   </div>
 
@@ -82,7 +82,7 @@
        ```python # run``` block; editable, and remembered per exercise. -->
   <div id="run-bar">
     <label for="run-args">Run with</label>
-    <textarea id="run-args" rows="1" spellcheck="false" autocomplete="off"
+    <textarea id="run-args" rows="1" spellcheck="false" autocorrect="off" autocomplete="off"
               autocapitalize="off" wrap="off"
               placeholder="print(my_function(...))"></textarea>
     <button id="btn-run-reset" type="button" title="Restore the exercise's default call">&#8635;</button>
@@ -102,10 +102,10 @@
       <button class="tab" type="button" role="tab" aria-selected="false" data-tab="console">&gt;_ Console (iPython)</button>
     </div>
     <div id="output-pane" class="tab-content active">
-      <pre id="output">Loading Python runtime...</pre>
+      <pre id="output" aria-live="polite">Loading Python runtime...</pre>
     </div>
     <div id="tests-pane" class="tab-content">
-      <pre id="tests-output"></pre>
+      <pre id="tests-output" aria-live="polite"></pre>
     </div>
     <div id="console-pane" class="tab-content">
       <div id="console-history"></div>
@@ -114,7 +114,7 @@
         <!-- textarea, not input: multi-line blocks (def/for/if...) are editable.
              Enter opens a new line with Python-aware indentation;
              Shift+Enter (or Ctrl+Enter) runs the block. -->
-        <textarea id="console-input" rows="1" spellcheck="false" autocomplete="off"
+        <textarea id="console-input" rows="1" spellcheck="false" autocorrect="off" autocomplete="off"
                   autocapitalize="off" wrap="off"
                   placeholder="Python — Enter to run, Shift+Enter for a new line, !help for keys"></textarea>
       </div>

@@ -167,9 +167,19 @@
 
   // ---------------------------------------------------------------- submit
   async function submit(force) {
+    // %stop / %restart have to work even while busy: a worker wedged in an
+    // infinite loop never clears `busy`, so the ordinary path below can never be
+    // reached, and on a phone there is no Ctrl+C. Handle them before the guard.
+    const trimmed = $input.value.trim();
+    if (trimmed === '%stop' || trimmed === '%restart') {
+      append('>>> ' + trimmed, null, 'code');
+      setInput('');
+      restart();
+      return;
+    }
     if (busy) {
       append('Python is still busy running your last command. '
-           + 'Press Ctrl+C (or type %stop) to restart it.', 'error');
+           + 'Press Ctrl+C, tap the ■ key, or type %stop to restart it.', 'error');
       return;
     }
     const src = $input.value;
@@ -304,6 +314,14 @@
   });
 
 
+  // Keep the caret (and the on-screen keyboard) on the input: without this the
+  // button takes focus on press, the keyboard dips for a frame, then click
+  // re-focuses -- a visible flicker on iOS. preventDefault on the press keeps
+  // focus where it is; the click handler below still fires and does the work.
+  $keyrow.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) e.preventDefault();
+  });
+
   // The extra key row: insert a character, or act as history arrows
   $keyrow.addEventListener('click', e => {
     const btn = e.target.closest('button');
@@ -312,6 +330,7 @@
     if (act === 'up') { historyPrev(); $input.focus(); return; }
     if (act === 'down') { historyNext(); $input.focus(); return; }
     if (act === 'newline') { newline(); $input.focus(); return; }
+    if (act === 'stop') { restart(); $input.focus(); return; }
     const text = btn.dataset.ins;
     if (text == null) return;
     const at = $input.selectionStart;

@@ -59,6 +59,9 @@
   <button type="button" tabindex="-1" data-act="up" title="Previous command">&#8593;</button>
   <button type="button" tabindex="-1" data-act="down" title="Next command">&#8595;</button>
   <button type="button" tabindex="-1" data-act="newline" title="New line">&crarr;</button>
+  <!-- The only escape from an infinite loop on a phone: a wedged worker can only
+       be terminated, and there is no Ctrl+C on a touch keyboard. -->
+  <button type="button" tabindex="-1" data-act="stop" title="Stop and restart Python">&#9632;</button>
 </div>
 
 <script src="/js/tin-prism-dark.js"></script>

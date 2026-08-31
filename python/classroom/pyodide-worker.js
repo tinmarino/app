@@ -15,6 +15,17 @@ let replComplete = null;  // (src)       -> JSON string
 let replReset = null;
 
 /* ── helpers ──────────────────────────────────────────────── */
+// A runaway `for i in range(10**6): print(i)` produces megabytes; posting all of
+// it and letting the main thread regex + Prism it into innerHTML freezes the tab
+// (a phone for many seconds) long after the worker is done. Cap it, as the
+// console path already caps its own output.
+const OUT_LIMIT = 20000;
+function truncOut(text) {
+  return text.length <= OUT_LIMIT
+    ? text
+    : text.slice(0, OUT_LIMIT) + '\n...<output truncated>';
+}
+
 function capture(fn) {
   let stdout = '', stderr = '';
   pyodide.setStdout({ batched: s => { stdout += s + '\n'; } });
@@ -23,8 +34,8 @@ function capture(fn) {
   try { result = fn(); }
   catch (e) { error = e.message || String(e); }
   return {
-    stdout: stdout.trimEnd(),
-    stderr: stderr.trimEnd(),
+    stdout: truncOut(stdout.trimEnd()),
+    stderr: truncOut(stderr.trimEnd()),
     result,
     error
   };
@@ -151,7 +162,19 @@ self.onmessage = async function (e) {
 
   /* ── run (exec, used by the Run and Check buttons) ── */
   if (msg.type === 'run') {
-    const res = capture(() => { pyodide.runPython(msg.code); });
+    const res = capture(() => {
+      if (msg.fresh) {
+        // Check grades in a throwaway namespace: a name left in __main__ by an
+        // earlier Run or a console command must NOT stand in for a definition the
+        // student has since renamed or deleted, or Check would pass broken code.
+        // Run and the console stay on __main__, so they still share state.
+        const ns = pyodide.toPy({});
+        try { pyodide.runPython(msg.code, { globals: ns }); }
+        finally { ns.destroy(); }
+      } else {
+        pyodide.runPython(msg.code);
+      }
+    });
     postMessage({ type: 'result', ...res });
     return;
   }

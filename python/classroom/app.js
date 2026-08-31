@@ -217,7 +217,7 @@
   const OUTPUT_KEY = 'py_output_open';
   const PARENT_SWIPE_TIMEOUT = 250;
 
-  function isNarrow() { return window.matchMedia('(max-width: 700px)').matches; }
+  function isNarrow() { return window.matchMedia('(max-width: 700px), (max-height: 500px)').matches; }
 
   function inMidLeftZone(start) {
     return start.x <= LEFT_ZONE
@@ -337,11 +337,24 @@
     if (Math.abs(dy) > SWIPE_MIN && Math.abs(dx) < SWIPE_SLOP) {
       if (!isNarrow()) return;
       const fromBottom = inMidBottomZone(start);
+      const onHandle = $splitterY.contains(start.target)
+        || (start.target.closest && start.target.closest('#output-tabs'));
       const inDrawer = $outputArea.contains(start.target) || $splitterY.contains(start.target);
       if (!fromBottom && !inDrawer) return;
-      e.stopImmediatePropagation();
-      if (dy < 0 && !outputOpen()) setOutputOpen(true);
-      else if (dy > 0 && outputOpen()) setOutputOpen(false);
+      // Down-swipe to close: a long traceback is scrollable, so a downward drag
+      // inside it is the student scrolling back up, not a request to dismiss the
+      // drawer. Only close when the gesture is on the handle/tabs, or the pane is
+      // already scrolled to the top (nothing left to scroll up to).
+      if (dy > 0 && outputOpen()) {
+        const pane = document.querySelector('.tab-content.active');
+        const atTop = !pane || pane.scrollTop <= 0;
+        if (!onHandle && !atTop) return;
+        e.stopImmediatePropagation();
+        setOutputOpen(false);
+      } else if (dy < 0 && !outputOpen()) {
+        e.stopImmediatePropagation();
+        setOutputOpen(true);
+      }
       return;
     }
 
@@ -469,13 +482,11 @@
       next.click();
     });
   });
+  // All tab activation (click and the arrow-key nav above) goes through
+  // switchTab, so aria-selected, the console focus and the phone drawer stay in
+  // step instead of only the .active classes being toggled.
   document.querySelectorAll('#output-tabs .tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#output-tabs .tab').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(btn.dataset.tab + '-pane').classList.add('active');
-    });
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
   // === Init Pyodide Worker ===
@@ -525,6 +536,7 @@
   async function loadManifest() {
     try {
       const resp = await fetch(MANIFEST_URL);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
       exercises = await resp.json();
     } catch (e) {
       exercises = [];
@@ -569,6 +581,9 @@
     // Load exercise markdown/content
     try {
       const resp = await fetch(EXERCISES_BASE + '/' + exercise.file);
+      // Without this a 404 hands back the server's HTML error page, which has no
+      // fences, so the editor would go blank with no explanation.
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' for ' + exercise.file);
       const text = await resp.text();
       // A slower earlier request must not overwrite a newer selection
       if (token !== selectToken) return;
@@ -612,7 +627,9 @@
     if (runMatch) res.run = runMatch[1].trim();
     // The "## Description" section: the long-form task, rendered on demand.
     // Its own headings start at h3, and are lifted to h1 when displayed.
-    const detailMatch = md.match(/^##\s+Description\s*$([\s\S]*?)(?=^##\s|\Z)/m);
+    // (?![\s\S]) is end-of-input: JS has no \Z, and a literal \Z would stop the
+    // capture at the first capital "Z" in the Description text.
+    const detailMatch = md.match(/^##\s+Description\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/m);
     if (detailMatch) res.detail = detailMatch[1].trim();
 
     // Description is everything before the first code block
@@ -641,6 +658,8 @@
       reportRuntimeError($output, err);
       return;
     }
+    // The runtime answered, so it is no longer wedged: stop nagging with Stop.
+    $btnStop.classList.remove('urgent');
     let out = '';
     if (result.stdout) out += result.stdout + '\n';
     if (result.stderr) out += result.stderr + '\n';
@@ -669,11 +688,12 @@
 
     let result;
     try {
-      result = await workerMgr.run(code);
+      result = await workerMgr.run(code, true);   // fresh namespace: grade only this code
     } catch (err) {
       reportRuntimeError($testsOutput, err);
       return;
     }
+    $btnStop.classList.remove('urgent');
     let out = '';
     if (result.stdout) out += result.stdout + '\n';
     if (result.stderr) out += result.stderr + '\n';
@@ -681,9 +701,13 @@
       out += '--- FAIL ---\n' + result.error + '\n';
     } else {
       out += '--- ALL TESTS PASSED ---\n';
-      // Remember the code that actually passed, so Download/Submit report real work
-      localStorage.setItem(SOLVED_PREFIX + currentExercise.id, $editor.value);
-      markDone(currentExercise.id);
+      // Remember the code that actually passed, so Download/Submit report real
+      // work. Guarded: a quota or private-mode throw here must not abort before
+      // the pass is shown on screen.
+      try {
+        localStorage.setItem(SOLVED_PREFIX + currentExercise.id, $editor.value);
+        markDone(currentExercise.id);
+      } catch (err) { console.warn('Could not save progress:', err); }
     }
     renderOutput($testsOutput, out);
   }
@@ -864,7 +888,11 @@
 
   // --- Submit ------------------------------------------------------------
   async function submitConsole(force) {
-    if (consoleBusy) return;
+    if (consoleBusy) {
+      appendConsole('Python is still running your last command. '
+        + 'Press Stop if it is stuck in a loop.', 'error');
+      return;
+    }
     const src = $consoleInput.value;
     if (!src.trim()) { setConsoleInput(''); return; }
 
@@ -896,6 +924,9 @@
     } finally {
       consoleBusy = false;
     }
+
+    // The runtime answered, so it is free again.
+    $btnStop.classList.remove('urgent');
 
     if (res.status === 'incomplete' && !force) {
       // Python says the block is unfinished: hand it back with a fresh line

@@ -105,9 +105,11 @@ class PyodideWorkerManager {
     });
   }
 
-  async run(code) {
+  // fresh: exec in a throwaway namespace instead of __main__ (used by Check, so
+  // a stale definition left over in __main__ cannot pass the grader).
+  async run(code, fresh) {
     await this.readyPromise;
-    return this._enqueue('run', { code });
+    return this._enqueue('run', { code, fresh: !!fresh });
   }
 
   // Push a block into pyodide.console.Console.
