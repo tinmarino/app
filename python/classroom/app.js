@@ -218,7 +218,7 @@
   //
   const SWIPE_MIN = 60;        // px of travel needed to count as a swipe
   const SWIPE_SLOP = 40;       // max drift on the other axis before we let go
-  const LEFT_FRACTION = 0.5;   // a swipe to reveal the sidebar may start in the left half
+  const LEFT_FRACTION = 1 / 3; // a swipe to reveal the sidebar must start in the left third
   const LOWER_FRACTION = 0.5;  // a vertical swipe drives the dock from the lower half
   const OUTPUT_KEY = 'py_output_open';
   const PARENT_SWIPE_TIMEOUT = 250;
@@ -352,8 +352,11 @@
     const start = touchStart;
     touchStart = null;
 
-    // Vertical: drive the output dock. A swipe that starts in the lower half of
-    // the screen (or on the dock) toggles it -- down hides, up shows.
+    // Vertical output-dock swipe (up/down) is intentionally DISABLED: on a phone
+    // a downward swipe collides with the browser's pull-to-refresh. Toggle the
+    // dock with the splitter grip / output tabs instead. Kept commented so it
+    // can be restored.
+    /*
     if (Math.abs(dy) > SWIPE_MIN && Math.abs(dx) < SWIPE_SLOP) {
       if (!inLowerZone(start)) return;      // upper half: leave scrolling alone
       const inDock = $outputArea.contains(start.target) || $splitterY.contains(start.target);
@@ -362,9 +365,6 @@
 
       if (dy > 0) {                         // swipe down -> hide
         if (!outputOpen()) return;
-        // A long traceback is scrollable, so a downward drag inside the open
-        // dock is the student scrolling back up -- dismiss only from the grip,
-        // or when the pane is already scrolled to the top.
         if (inDock && !onHandle) {
           const pane = document.querySelector('.tab-content.active');
           if (pane && pane.scrollTop > 0) return;
@@ -378,6 +378,7 @@
       }
       return;
     }
+    */
 
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
 
@@ -580,6 +581,7 @@
       $syncStatus.textContent = 'Could not load the exercise list from ' + EXERCISES_BASE;
     }
     renderExerciseList();
+    selectExerciseFromUrl();
   }
 
   function renderExerciseList() {
@@ -604,12 +606,33 @@
     });
   }
 
+  // The ?exercice= URL param: the exercise title slugified, e.g.
+  // "A4 - Fibonacci" -> "a4-fibonacci".
+  function exerciseSlug(ex) {
+    return String(ex.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  // Select the exercise named in ?exercice=<slug> (also accepts ?exercise=).
+  function selectExerciseFromUrl() {
+    const params = new URLSearchParams(location.search);
+    const want = (params.get('exercice') || params.get('exercise') || '').toLowerCase();
+    if (!want) return;
+    const idx = exercises.findIndex(ex => exerciseSlug(ex) === want);
+    if (idx >= 0) selectExercise(idx);
+  }
+
   let selectToken = 0;
 
   async function selectExercise(idx) {
     const token = ++selectToken;
     const exercise = exercises[idx];
     currentExercise = exercise;
+    // Reflect the choice in the URL so it can be shared and reloaded.
+    try {
+      const url = new URL(location.href);
+      url.searchParams.set('exercice', exerciseSlug(exercise));
+      history.replaceState(null, '', url);
+    } catch { /* history unavailable */ }
     // Highlight active
     $list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === idx));
     $title.textContent = currentExercise.title;
