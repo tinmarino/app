@@ -257,7 +257,7 @@
     return out;
   }
 
-  async function s3(method, key, query, body) {
+  async function s3(method, key, query, body, contentType) {
     const c = await ensureCredentials();
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]/g, '').replace(/\.\d+/, '');
@@ -272,7 +272,7 @@
       'x-amz-date': amzDate,
       'x-amz-security-token': c.SessionToken
     };
-    if (method !== 'GET') headers['content-type'] = 'application/json';
+    if (method !== 'GET') headers['content-type'] = contentType || 'application/json';
 
     const names = Object.keys(headers).sort();
     const signedHeaders = names.join(';');
@@ -302,12 +302,19 @@
   // ---------------------------------------------------------------- storage
 
   function prefix() {
-    if (!identityId) throw new Error('Not logged in.');
-    return identityId + '/';
+    const user = username();
+    if (!user) throw new Error('Not logged in.');
+    return user + '/';
   }
 
   async function putJson(key, value) {
     const resp = await s3('PUT', key, '', JSON.stringify(value, null, 2));
+    if (!resp.ok) throw new Error('Upload failed: ' + resp.status + ' ' + await resp.text());
+    return true;
+  }
+
+  async function putText(key, text, contentType) {
+    const resp = await s3('PUT', key, '', text, contentType || 'text/x-python');
     if (!resp.ok) throw new Error('Upload failed: ' + resp.status + ' ' + await resp.text());
     return true;
   }
@@ -319,9 +326,23 @@
     return resp.json();
   }
 
-  // The student's own submission trail, newest first
-  async function listSubmissions() {
-    const query = 'list-type=2&prefix=' + uriEncode(prefix() + 'submissions/', false);
+  // ------------------------------------------------ readable key helpers
+  // A1 -> a01, D5 -> d05, E12 -> e12 (lower-case, number padded to two digits).
+  function slugId(id) {
+    return String(id).toLowerCase().replace(/\d+/, n => n.padStart(2, '0'));
+  }
+  // "A1 - Print Hello" / "Print Hello" -> "print-hello".
+  function slugTitle(title) {
+    return String(title)
+      .replace(/^\s*[A-Za-z]+\d+\s*-\s*/, '')   // drop a leading "A1 - "
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  // List every object under an arbitrary key prefix (newest first).
+  async function listPrefix(keyPrefix) {
+    const query = 'list-type=2&prefix=' + uriEncode(keyPrefix, false);
     const resp = await s3('GET', '', query);
     if (!resp.ok) throw new Error('List failed: ' + resp.status);
     const xml = new DOMParser().parseFromString(await resp.text(), 'text/xml');
@@ -334,17 +355,40 @@
     }).sort((a, b) => (a.modified < b.modified ? 1 : -1));
   }
 
-  // Save one submission as its own object, and refresh latest.json
+  // Next 3-digit sequence for this student's exercise (any status): 001, 002...
+  async function nextSeq(user, id) {
+    const items = await listPrefix(prefix() + user + '-' + id + '-');
+    return String(items.length + 1).padStart(3, '0');
+  }
+
+  // The student's own answers (the *.py files), newest first.
+  async function listSubmissions() {
+    const items = await listPrefix(prefix());
+    return items.filter(it => it.key.endsWith('.py'));
+  }
+
+  // Save one answer as its own readable object, and refresh latest.json:
+  //   <user>/<user>-<id>-<title>-<seq>-<status>.py    (the code)
+  //   <user>/latest.json                              (the full state)
   async function submit(state) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const label = (state.exercise || 'all').replace(/[^\w.-]+/g, '_');
-    const record = { ...state, username: username(), savedAt: new Date().toISOString() };
-    await putJson(prefix() + 'submissions/' + stamp + '-' + label + '.json', record);
+    const user = username();
+    const record = { ...state, username: user, savedAt: new Date().toISOString() };
+
+    if (state.exercise && state.code != null && state.code !== '') {
+      const id = slugId(state.exercise);
+      const title = slugTitle(state.title || state.exercise);
+      const status = (state.status || 'submitted').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const seq = await nextSeq(user, id);
+      const name = [user, id, title, seq, status].filter(Boolean).join('-') + '.py';
+      record.file = prefix() + name;
+      await putText(prefix() + name, state.code);
+    }
+
     await putJson(prefix() + 'latest.json', record);
     return record;
   }
 
-  async function loadLatest() { return getJson(prefix() + 'latest.json'); }
+    async function loadLatest() { return getJson(prefix() + 'latest.json'); }
   async function loadSubmission(key) { return getJson(key); }
 
   global.ClassroomSync = {

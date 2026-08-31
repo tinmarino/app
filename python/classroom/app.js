@@ -1308,7 +1308,7 @@
       if (!items.length) { appendConsole('No submissions yet.', 'help'); return; }
       appendConsole(items.length + ' submission(s), newest first:', 'help');
       items.slice(0, 40).forEach(item => {
-        const name = item.key.split('/').pop().replace(/\.json$/, '');
+        const name = item.key.split('/').pop().replace(/\.(json|py)$/, '');
         appendConsole('  ' + item.modified.slice(0, 16).replace('T', ' ') +
                       '  ' + name + '  (' + item.size + ' bytes)');
       });
@@ -1322,8 +1322,15 @@
   async function pushProgress() {
     if (!isLoggedIn()) { showLogin(); return; }
 
+    const curId = currentExercise ? currentExercise.id : null;
+    // "accepted" once the tests have passed (getSolved holds the passing code),
+    // otherwise it is just a "submitted" work-in-progress.
+    const passed = curId ? !!getSolved(curId) : false;
     const progress = {
-      exercise: currentExercise ? currentExercise.id : 'all',
+      exercise: curId || 'all',
+      title: currentExercise ? currentExercise.title : '',
+      code: curId ? $editor.value : null,
+      status: passed ? 'accepted' : 'submitted',
       done: getDoneList(),
       exercises: {},   // current editor buffer
       solved: {}       // code that actually passed the tests
