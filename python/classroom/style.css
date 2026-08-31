@@ -378,6 +378,26 @@ button#btn-download:hover:not(:disabled) { background: var(--gb-neutral_purple);
   cursor: row-resize;
 }
 
+/* --- Swipe-collapsed docked panels (wide layout) ---
+   Swipe left/right hides/shows the exercise sidebar; swipe down/up hides/shows
+   the output dock. The narrow layout has its own rules for these classes in the
+   media query below; here they collapse the docked flex panels instead. */
+#sidebar { transition: width 0.18s ease-out; }
+body.sidebar-collapsed #sidebar {
+  width: 0 !important;
+  min-width: 0;
+  border-right: none;
+  overflow: hidden;
+}
+body.sidebar-collapsed #splitter-x { display: none; }
+
+body.output-collapsed #output-area {
+  height: 0 !important;
+  min-height: 0;
+  overflow: hidden;
+  border-top: none;
+}
+
 /* While dragging, don't let the pointer select text or hit the iframe content */
 body.resizing { cursor: inherit; user-select: none; }
 body.resizing * { user-select: none !important; }

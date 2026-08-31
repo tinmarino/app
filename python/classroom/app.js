@@ -207,22 +207,25 @@
   // the very edge); the output drawer keeps a mid-bottom pull zone. Left swipes
   // ask the parent page to hide its own docks first, and only then hide ours.
   //
-  //   swipe right  -> open our sidebar; if it is already open, ask the parent
-  //   swipe left   -> ask the parent to hide its dock first, then hide ours
-  //   swipe up/down from the bottom hotspot -> show / hide the output drawer
+  // The same gestures work in the wide (docked) layout and the narrow (phone)
+  // layout; only the CSS that "hidden" means differs -- see the two body
+  // classes below.
+  //
+  //   swipe right  -> show the exercise sidebar; if already shown, ask the parent
+  //   swipe left   -> hide the exercise sidebar; if already hidden, ask the parent
+  //   swipe up     -> show the output dock   (from the lower half of the screen)
+  //   swipe down   -> hide the output dock   (from the lower half of the screen)
   //
   const SWIPE_MIN = 60;        // px of travel needed to count as a swipe
   const SWIPE_SLOP = 40;       // max drift on the other axis before we let go
-  const LEFT_FRACTION = 0.5;   // a swipe to open may start in the whole left half
-  const BOTTOM_ZONE = 90;      // px above the bottom edge that starts a drawer pull
-  const BOTTOM_LEFT = 0.18;    // keep the drawer hotspot in the bottom middle
-  const BOTTOM_RIGHT = 0.82;
+  const LEFT_FRACTION = 0.5;   // a swipe to reveal the sidebar may start in the left half
+  const LOWER_FRACTION = 0.5;  // a vertical swipe drives the dock from the lower half
   const OUTPUT_KEY = 'py_output_open';
   const PARENT_SWIPE_TIMEOUT = 250;
 
   function isNarrow() { return window.matchMedia('(max-width: 700px), (max-height: 500px)').matches; }
 
-  // A swipe that opens the sidebar may start anywhere in the left half of the
+  // A swipe that reveals the sidebar may start anywhere in the left half of the
   // screen. The old build only listened to a 60px strip at the very edge, which
   // on Android sits under the OS back-gesture and so was effectively unreachable
   // -- that is why swiping "did not work at all".
@@ -230,39 +233,53 @@
     return start.x <= window.innerWidth * LEFT_FRACTION;
   }
 
-  function inMidBottomZone(start) {
-    return window.innerHeight - start.y <= BOTTOM_ZONE
-      && start.x >= window.innerWidth * BOTTOM_LEFT
-      && start.x <= window.innerWidth * BOTTOM_RIGHT;
+  // A vertical swipe drives the output dock when it starts in the lower half of
+  // the screen (that is where the dock lives) or on the dock itself.
+  function inLowerZone(start) {
+    return start.y >= window.innerHeight * LOWER_FRACTION
+      || $outputArea.contains(start.target)
+      || $splitterY.contains(start.target);
   }
 
-  function setSidebarOpen(open) {
-    document.body.classList.toggle('sidebar-open', open);
-    $btnMenu.setAttribute('aria-expanded', String(open));
+  // --- Sidebar (both layouts) --------------------------------------------
+  // Narrow: the sidebar is an overlay, shown by `sidebar-open` (hidden default).
+  // Wide:   the sidebar is docked and shown by default; `sidebar-collapsed`
+  //         slides it out. Two classes so each layout keeps its natural default.
+  function sidebarShown() {
+    return isNarrow()
+      ? document.body.classList.contains('sidebar-open')
+      : !document.body.classList.contains('sidebar-collapsed');
   }
 
-  // --- Output drawer ------------------------------------------------------
-  // Only meaningful on a phone; on a desktop the pane is always there and the
-  // class is simply never set.
+  function setSidebarShown(show) {
+    if (isNarrow()) {
+      document.body.classList.toggle('sidebar-open', show);
+    } else {
+      document.body.classList.toggle('sidebar-collapsed', !show);
+    }
+    $btnMenu.setAttribute('aria-expanded', String(show));
+  }
+
+  // --- Output dock (both layouts) ----------------------------------------
+  // `output-collapsed` pins the dock to zero height in either layout.
   function outputOpen() { return !document.body.classList.contains('output-collapsed'); }
 
   function setOutputOpen(open) {
-    if (!isNarrow()) { document.body.classList.remove('output-collapsed'); return; }
     if (open === outputOpen()) return;
     document.body.classList.toggle('output-collapsed', !open);
     try { localStorage.setItem(OUTPUT_KEY, open ? '1' : '0'); } catch { /* private mode */ }
     syncScroll();
   }
 
-  // First visit on a phone starts with the drawer shut: the editor is the point
-  // of the page, and Run/Check pull the drawer back up on their own.
+  // A wide screen starts with the dock open; a phone starts with it shut (the
+  // editor is the point of the page). A saved choice wins in both, and Run/Check
+  // pull the dock back up on their own.
   function applyOutputDefault() {
-    if (!isNarrow()) { document.body.classList.remove('output-collapsed'); return; }
     const saved = localStorage.getItem(OUTPUT_KEY);
-    document.body.classList.toggle('output-collapsed', saved !== '1');
+    const open = saved === null ? !isNarrow() : saved === '1';
+    document.body.classList.toggle('output-collapsed', !open);
   }
   applyOutputDefault();
-  window.addEventListener('resize', applyOutputDefault);
 
   // Tap the handle to toggle; a real drag resizes instead (makeSplitter owns
   // that), so remember whether the pointer actually moved before acting.
@@ -274,10 +291,9 @@
     if (Math.abs(dy) > 8) handleDown.moved = true;
     // While collapsed the pane is pinned to 0 by CSS, so dragging it cannot
     // resize anything. Pulling up is then plainly a request to open it.
-    if (isNarrow() && !outputOpen() && dy < -20) setOutputOpen(true);
+    if (!outputOpen() && dy < -20) setOutputOpen(true);
   });
   $splitterY.addEventListener('click', () => {
-    if (!isNarrow()) return;
     if (handleDown && handleDown.moved) { handleDown = null; return; }
     handleDown = null;
     setOutputOpen(!outputOpen());
@@ -336,27 +352,27 @@
     const start = touchStart;
     touchStart = null;
 
-    // Vertical: the output drawer, but only for a pull that starts at the
-    // bottom edge or inside the drawer itself. Everywhere else a vertical drag
-    // is scrolling — the editor's above all — and must be left alone.
+    // Vertical: drive the output dock. A swipe that starts in the lower half of
+    // the screen (or on the dock) toggles it -- down hides, up shows.
     if (Math.abs(dy) > SWIPE_MIN && Math.abs(dx) < SWIPE_SLOP) {
-      if (!isNarrow()) return;
-      const fromBottom = inMidBottomZone(start);
+      if (!inLowerZone(start)) return;      // upper half: leave scrolling alone
+      const inDock = $outputArea.contains(start.target) || $splitterY.contains(start.target);
       const onHandle = $splitterY.contains(start.target)
         || (start.target.closest && start.target.closest('#output-tabs'));
-      const inDrawer = $outputArea.contains(start.target) || $splitterY.contains(start.target);
-      if (!fromBottom && !inDrawer) return;
-      // Down-swipe to close: a long traceback is scrollable, so a downward drag
-      // inside it is the student scrolling back up, not a request to dismiss the
-      // drawer. Only close when the gesture is on the handle/tabs, or the pane is
-      // already scrolled to the top (nothing left to scroll up to).
-      if (dy > 0 && outputOpen()) {
-        const pane = document.querySelector('.tab-content.active');
-        const atTop = !pane || pane.scrollTop <= 0;
-        if (!onHandle && !atTop) return;
+
+      if (dy > 0) {                         // swipe down -> hide
+        if (!outputOpen()) return;
+        // A long traceback is scrollable, so a downward drag inside the open
+        // dock is the student scrolling back up -- dismiss only from the grip,
+        // or when the pane is already scrolled to the top.
+        if (inDock && !onHandle) {
+          const pane = document.querySelector('.tab-content.active');
+          if (pane && pane.scrollTop > 0) return;
+        }
         e.stopImmediatePropagation();
         setOutputOpen(false);
-      } else if (dy < 0 && !outputOpen()) {
+      } else {                              // swipe up -> show
+        if (outputOpen()) return;
         e.stopImmediatePropagation();
         setOutputOpen(true);
       }
@@ -365,32 +381,21 @@
 
     if (Math.abs(dy) > SWIPE_SLOP || Math.abs(dx) < SWIPE_MIN) return;
 
+    // Horizontal: drive the exercise sidebar. Right shows, left hides. Revealing
+    // needs a deliberate start in the left half (so we don't steal a stray drag
+    // in the editor); hiding works from anywhere once the sidebar is shown.
+    const shown = sidebarShown();
     const fromLeft = inOpenZone(start) || $sidebar.contains(start.target);
-    const open = document.body.classList.contains('sidebar-open');
-    // When the sidebar is open, a left swipe from anywhere should be able to
-    // close it (or close the parent's dock first). The zone restriction only
-    // applies when the sidebar is closed and we need a deliberate gesture.
-    if (!fromLeft && !open) return;
-    // Once we know the gesture is ours, keep it from also reaching any other
-    // touch listener on the page.
-    e.stopImmediatePropagation();
 
-    // On a wide screen this page has no overlay sidebar to move, so the hotspot
-    // gestures simply belong to the parent page.
-    if (!isNarrow()) {
-      await requestParentSwipe(dx > 0 ? 'right' : 'left');
-      return;
-    }
-
-    if (dx > 0) {
-      // Right swipe to reveal: start it in the left half (or on the sidebar).
+    if (dx > 0) {                           // swipe right -> show
+      if (shown) { await requestParentSwipe('right'); return; }
       if (!fromLeft) return;
-      if (!open) setSidebarOpen(true);
-      else await requestParentSwipe('right');
-    } else {
-      if (open) {
-        const handled = await requestParentSwipe('left');
-        if (!handled) setSidebarOpen(false);
+      e.stopImmediatePropagation();
+      setSidebarShown(true);
+    } else {                                // swipe left -> hide
+      if (shown) {
+        e.stopImmediatePropagation();
+        setSidebarShown(false);
       } else {
         await requestParentSwipe('left');
       }
@@ -398,16 +403,19 @@
   }, { passive: true });
 
   // Same thing for people who are not swiping
-  $btnMenu.addEventListener('click', () => {
-    setSidebarOpen(!document.body.classList.contains('sidebar-open'));
-  });
+  $btnMenu.addEventListener('click', () => { setSidebarShown(!sidebarShown()); });
   const $backdrop = document.getElementById('sidebar-backdrop');
-  $backdrop.addEventListener('click', () => setSidebarOpen(false));
+  $backdrop.addEventListener('click', () => setSidebarShown(false));
 
   // Picking an exercise on a phone should get out of the way, and hand the
   // screen back to the code.
-  $list.addEventListener('click', () => { if (isNarrow()) setSidebarOpen(false); });
-  window.addEventListener('resize', () => { if (!isNarrow()) setSidebarOpen(false); });
+  $list.addEventListener('click', () => { if (isNarrow()) setSidebarShown(false); });
+  // Leaving the narrow layout must not strand the overlay-open class on the body
+  // (it would collapse the docked sidebar's width); re-apply the dock defaults.
+  window.addEventListener('resize', () => {
+    if (!isNarrow()) { document.body.classList.remove('sidebar-open'); }
+    applyOutputDefault();
+  });
 
   // === Zoom = code font size ==============================================
   // The viewport is locked (see index.html), so a pinch cannot scale the page.
