@@ -74,10 +74,6 @@
   const $loginError = document.getElementById('login-error');
   const $loginNew = document.getElementById('login-new');
   const $loginNewRow = document.getElementById('login-new-row');
-  const $loginKey = document.getElementById('login-key');
-  const $loginKeyRow = document.getElementById('login-key-row');
-  const $loginSwitchRegister = document.getElementById('login-switch-register');
-  const $loginSwitchLogin = document.getElementById('login-switch-login');
   const $btnHistory = document.getElementById('btn-history');
   const $btnRestore = document.getElementById('btn-restore');
 
@@ -1373,12 +1369,16 @@
       exercise: curId || 'all',
       title: currentExercise ? currentExercise.title : '',
       code: curId ? $editor.value : null,
+      file: currentExercise ? currentExercise.file : '',
       status: passed ? 'accepted' : 'submitted',
       done: getDoneList(),
       exercises: {},   // current editor buffer
-      solved: {}       // code that actually passed the tests
+      solved: {},      // code that actually passed the tests
+      files: {},       // exercise file names: the .py is named after them
+      backfill: !!snapshotOnly   // write the missing accepted .py files too
     };
     exercises.forEach(ex => {
+      progress.files[ex.id] = ex.file;
       const saved = localStorage.getItem(CODE_PREFIX + ex.id);
       if (saved) progress.exercises[ex.id] = saved;
       const solved = getSolved(ex.id);
@@ -1389,8 +1389,9 @@
     if ($btnPush) $btnPush.disabled = true;
     try {
       const record = await withAutoLogin(() => Sync.submit(progress));
+      const extra = record.backfilled ? ' Uploaded ' + record.backfilled.join(', ') + '.' : '';
       setSyncNote((snapshotOnly ? 'Saved to the server at ' : 'Submitted at ')
-                  + record.savedAt.slice(0, 16).replace('T', ' ') + '.');
+                  + record.savedAt.slice(0, 16).replace('T', ' ') + '.' + extra);
     } catch (err) {
       setSyncNote('Submit failed: ' + err.message);
       console.error(err);
@@ -1429,7 +1430,6 @@
   // password is still the shared class one, where Cognito demands a new
   // password before it hands out any token.
   let pendingChallenge = null;
-  let registerMode = false;
 
   function reflectLoginState() {
     const loggedIn = isLoggedIn();
@@ -1499,7 +1499,6 @@
     $loginModal.classList.remove('hidden');
     $loginError.textContent = '';
     showNewPasswordField(false);
-    setRegisterMode(false);
     const remembered = Sync.rememberedLogin ? Sync.rememberedLogin() : null;
     $loginUser.value = currentUser() || (remembered ? remembered.username : '') || '';
     $loginPass.value = remembered ? remembered.password : '';
@@ -1515,33 +1514,6 @@
     $loginNewRow.classList.toggle('hidden', !on);
     if (on) { $loginNew.value = ''; $loginNew.focus(); }
   }
-  // Register mode: same user/password fields, plus the class password that
-  // the PreSignUp trigger checks. The account is then the student's own.
-  function setRegisterMode(on) {
-    registerMode = on;
-    $loginKeyRow.classList.toggle('hidden', !on);
-    $loginSwitchRegister.classList.toggle('hidden', on);
-    $loginSwitchLogin.classList.toggle('hidden', !on);
-    $loginOk.textContent = on ? 'Register' : 'Login';
-    $loginPass.autocomplete = on ? 'new-password' : 'current-password';
-    $loginError.textContent = '';
-    if (on) $loginKey.value = '';
-  }
-
-  async function handleRegister(user, pass) {
-    const key = $loginKey.value;
-    if (!user || !pass || !key) { $loginError.textContent = 'All three fields required.'; return; }
-    if (pass.length < 8) { $loginError.textContent = 'Your password: at least 8 characters.'; return; }
-    $loginError.textContent = 'Creating your account...';
-    try {
-      await Sync.signUp(user, pass, key);
-      hideLogin();
-      await afterLogin();
-    } catch (err) {
-      $loginError.textContent = err.message;
-    }
-  }
-
   async function handleLogin() {
     const user = $loginUser.value.trim();
     const pass = $loginPass.value;
@@ -1561,7 +1533,6 @@
       return;
     }
 
-    if (registerMode) { await handleRegister(user, pass); return; }
     if (!user || !pass) { $loginError.textContent = 'Both fields required.'; return; }
     $loginError.textContent = 'Signing in...';
     try {
@@ -1575,7 +1546,18 @@
       hideLogin();
       await afterLogin();
     } catch (err) {
-      $loginError.textContent = err.message;
+      if (err.type !== 'UserNotFoundException') { $loginError.textContent = err.message; return; }
+      // No such student: the first login with the class password creates the
+      // account (the PreSignUp trigger refuses any other password). One shared
+      // password for everyone, as the teacher wants it.
+      $loginError.textContent = 'New student: creating your account...';
+      try {
+        await Sync.signUp(user, pass);
+        hideLogin();
+        await afterLogin();
+      } catch (err2) {
+        $loginError.textContent = err2.message;
+      }
     }
   }
 
@@ -1694,9 +1676,6 @@
   $loginCancel.addEventListener('click', hideLogin);
   $loginPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
   $loginNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
-  $loginKey.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
-  $loginSwitchRegister.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(true); $loginKey.focus(); });
-  $loginSwitchLogin.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(false); });
 
   $editor.addEventListener('keydown', (e) => {
     // Ctrl/Cmd+Enter runs

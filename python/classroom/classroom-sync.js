@@ -117,7 +117,6 @@
     if (type === 'PasswordResetRequiredException') return 'Your password must be reset. Ask your teacher.';
     if (type === 'TooManyRequestsException') return 'Too many attempts. Wait a moment and try again.';
     if (type === 'InvalidPasswordException') return 'That password is too weak: ' + message;
-    if (type === 'UsernameExistsException') return 'That user name is taken. Log in instead, or pick another.';
     if (type === 'UserLambdaValidationException' && /class password/i.test(message)) {
       return 'Wrong class password.';
     }
@@ -182,16 +181,17 @@
     return { status: 'ok' };
   }
 
-  // Self-registration. The pool is open, and the PreSignUp trigger
-  // (admin/presignup/) only lets the account through when classKey is the
-  // shared class password; it then auto-confirms it, so the new student can
-  // log in straight away. Resolves { status: 'ok' } once logged in.
-  async function signUp(username, password, classKey) {
+  // First login creates the account. The pool is open, but the PreSignUp
+  // trigger (admin/presignup/) only lets the account through when the
+  // password IS the shared class password (sent again as classKey), and then
+  // auto-confirms it. So every student has the same password, and nobody
+  // without it can create anything. Resolves { status: 'ok' } once logged in.
+  async function signUp(username, password) {
     await cognito(IDP_HOST, 'AWSCognitoIdentityProviderService.SignUp', {
       ClientId: CLIENT_ID,
       Username: username,
       Password: password,
-      ClientMetadata: { classKey: classKey }
+      ClientMetadata: { classKey: password }
     });
     return login(username, password);
   }
@@ -350,18 +350,17 @@
   }
 
   // ------------------------------------------------ readable key helpers
-  // A1 -> a01, D5 -> d05, E12 -> e12 (lower-case, number padded to two digits).
-  function slugId(id) {
-    return String(id).toLowerCase().replace(/\d+/, n => n.padStart(2, '0'));
+  // The .py is named after the exercise file, case kept, so the bucket reads
+  // like the exercise folder: "ex/python-exercice-D3-undo-history.md" gives
+  // "D3-undo-history" and the object "tin-D3-undo-history-001-accepted.py".
+  function slugFile(file, fallbackId) {
+    const base = String(file || '').split('/').pop().replace(/\.md$/, '')
+      .replace(/^python-exercices?-/, '');
+    return (base || String(fallbackId || ''))
+      .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
-  // "A1 - Print Hello" / "Print Hello" -> "print-hello".
-  function slugTitle(title) {
-    return String(title)
-      .replace(/^\s*[A-Za-z]+\d+\s*-\s*/, '')   // drop a leading "A1 - "
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
+  // "D3-undo-history" -> "D3": the part before the first dash
+  function slugId(slug) { return slug.split('-')[0]; }
 
   // List every object under an arbitrary key prefix (newest first).
   async function listPrefix(keyPrefix) {
@@ -379,8 +378,8 @@
   }
 
   // Next 3-digit sequence for this student's exercise (any status): 001, 002...
-  async function nextSeq(user, id) {
-    const items = await listPrefix(prefix() + user + '-' + id + '-');
+  async function nextSeq(user, slug) {
+    const items = await listPrefix(prefix() + user + '-' + slug + '-');
     return String(items.length + 1).padStart(3, '0');
   }
 
@@ -391,20 +390,33 @@
   }
 
   // Save one answer as its own readable object, and refresh latest.json:
-  //   <user>/<user>-<id>-<title>-<seq>-<status>.py    (the code)
-  //   <user>/latest-class-01.json                     (the full state)
+  //   <user>/<user>-<file slug>-<seq>-<status>.py    (the code)
+  //   <user>/latest-class-01.json                    (the full state)
   async function submit(state) {
     const user = username();
     const record = { ...state, username: user, savedAt: new Date().toISOString() };
 
-    if (state.exercise && state.code != null && state.code !== '') {
-      const id = slugId(state.exercise);
-      const title = slugTitle(state.title || state.exercise);
+    if (state.exercise && state.exercise !== 'all' && state.code != null && state.code !== '') {
+      const slug = slugFile(state.file, state.exercise);
       const status = (state.status || 'submitted').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      const seq = await nextSeq(user, id);
-      const name = [user, id, title, seq, status].filter(Boolean).join('-') + '.py';
+      const seq = await nextSeq(user, slug);
+      const name = [user, slug, seq, status].filter(Boolean).join('-') + '.py';
       record.file = prefix() + name;
       await putText(prefix() + name, state.code);
+    }
+
+    // A login snapshot also backfills: every exercise that passed before the
+    // student had an account (or on another device) gets its accepted .py if
+    // none exists yet, so the teacher's folder shows the whole trail.
+    if (state.backfill && state.solved) {
+      const have = await listPrefix(prefix() + user + '-');
+      for (const [exId, code] of Object.entries(state.solved)) {
+        const slug = slugFile((state.files || {})[exId], exId);
+        if (!code || have.some(it => it.key.startsWith(prefix() + user + '-' + slugId(slug) + '-'))) continue;
+        const name = [user, slug, '001', 'accepted'].join('-') + '.py';
+        await putText(prefix() + name, code);
+        record.backfilled = (record.backfilled || []).concat(exId);
+      }
     }
 
     await putJson(prefix() + LATEST_KEY, record);
