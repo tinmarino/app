@@ -637,6 +637,14 @@
       url.searchParams.set('exercice', exerciseSlug(exercise));
       history.replaceState(null, '', url);
     } catch { /* history unavailable */ }
+    // Embedded in the home page (tinmarino.com/?show=python_exercises): the
+    // address bar belongs to the parent, so tell it which exercise is open.
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({ type: 'tinmarino-exercice', exercice: exerciseSlug(exercise) },
+                                  location.origin);
+      } catch { /* not our parent */ }
+    }
     // Highlight active
     $list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === idx));
     $title.textContent = currentExercise.title;
