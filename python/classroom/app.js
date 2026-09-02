@@ -74,6 +74,10 @@
   const $loginError = document.getElementById('login-error');
   const $loginNew = document.getElementById('login-new');
   const $loginNewRow = document.getElementById('login-new-row');
+  const $loginKey = document.getElementById('login-key');
+  const $loginKeyRow = document.getElementById('login-key-row');
+  const $loginSwitchRegister = document.getElementById('login-switch-register');
+  const $loginSwitchLogin = document.getElementById('login-switch-login');
   const $btnHistory = document.getElementById('btn-history');
   const $btnRestore = document.getElementById('btn-restore');
 
@@ -1430,6 +1434,7 @@
   // password is still the shared class one, where Cognito demands a new
   // password before it hands out any token.
   let pendingChallenge = null;
+  let registerMode = false;
 
   function reflectLoginState() {
     const loggedIn = isLoggedIn();
@@ -1499,6 +1504,7 @@
     $loginModal.classList.remove('hidden');
     $loginError.textContent = '';
     showNewPasswordField(false);
+    setRegisterMode(false);
     const remembered = Sync.rememberedLogin ? Sync.rememberedLogin() : null;
     $loginUser.value = currentUser() || (remembered ? remembered.username : '') || '';
     $loginPass.value = remembered ? remembered.password : '';
@@ -1513,6 +1519,33 @@
   function showNewPasswordField(on) {
     $loginNewRow.classList.toggle('hidden', !on);
     if (on) { $loginNew.value = ''; $loginNew.focus(); }
+  }
+  // Register mode: same user/password fields (the password becomes the
+  // student's own), plus the class password -- the master key the PreSignUp
+  // trigger checks.
+  function setRegisterMode(on) {
+    registerMode = on;
+    $loginKeyRow.classList.toggle('hidden', !on);
+    $loginSwitchRegister.classList.toggle('hidden', on);
+    $loginSwitchLogin.classList.toggle('hidden', !on);
+    $loginOk.textContent = on ? 'Register' : 'Login';
+    $loginPass.autocomplete = on ? 'new-password' : 'current-password';
+    $loginError.textContent = '';
+    if (on) $loginKey.value = '';
+  }
+
+  async function handleRegister(user, pass) {
+    const key = $loginKey.value;
+    if (!user || !pass || !key) { $loginError.textContent = 'All three fields required.'; return; }
+    if (pass.length < 8) { $loginError.textContent = 'Your password: at least 8 characters.'; return; }
+    $loginError.textContent = 'Creating your account...';
+    try {
+      await Sync.signUp(user, pass, key);
+      hideLogin();
+      await afterLogin();
+    } catch (err) {
+      $loginError.textContent = err.message;
+    }
   }
   async function handleLogin() {
     const user = $loginUser.value.trim();
@@ -1533,6 +1566,7 @@
       return;
     }
 
+    if (registerMode) { await handleRegister(user, pass); return; }
     if (!user || !pass) { $loginError.textContent = 'Both fields required.'; return; }
     $loginError.textContent = 'Signing in...';
     try {
@@ -1546,18 +1580,13 @@
       hideLogin();
       await afterLogin();
     } catch (err) {
-      if (err.type !== 'UserNotFoundException') { $loginError.textContent = err.message; return; }
-      // No such student: the first login with the class password creates the
-      // account (the PreSignUp trigger refuses any other password). One shared
-      // password for everyone, as the teacher wants it.
-      $loginError.textContent = 'New student: creating your account...';
-      try {
-        await Sync.signUp(user, pass);
-        hideLogin();
-        await afterLogin();
-      } catch (err2) {
-        $loginError.textContent = err2.message;
+      if (err.type === 'UserNotFoundException') {
+        // Offer the register form straight away, name kept
+        setRegisterMode(true);
+        $loginError.textContent = 'No such student. Register with the class password from your teacher.';
+        return;
       }
+      $loginError.textContent = err.message;
     }
   }
 
@@ -1676,6 +1705,9 @@
   $loginCancel.addEventListener('click', hideLogin);
   $loginPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
   $loginNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  $loginKey.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  $loginSwitchRegister.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(true); $loginKey.focus(); });
+  $loginSwitchLogin.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(false); });
 
   $editor.addEventListener('keydown', (e) => {
     // Ctrl/Cmd+Enter runs

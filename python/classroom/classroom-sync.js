@@ -117,6 +117,7 @@
     if (type === 'PasswordResetRequiredException') return 'Your password must be reset. Ask your teacher.';
     if (type === 'TooManyRequestsException') return 'Too many attempts. Wait a moment and try again.';
     if (type === 'InvalidPasswordException') return 'That password is too weak: ' + message;
+    if (type === 'UsernameExistsException') return 'That user name is taken. Log in instead, or pick another.';
     if (type === 'UserLambdaValidationException' && /class password/i.test(message)) {
       return 'Wrong class password.';
     }
@@ -181,17 +182,18 @@
     return { status: 'ok' };
   }
 
-  // First login creates the account. The pool is open, but the PreSignUp
-  // trigger (admin/presignup/) only lets the account through when the
-  // password IS the shared class password (sent again as classKey), and then
-  // auto-confirms it. So every student has the same password, and nobody
-  // without it can create anything. Resolves { status: 'ok' } once logged in.
-  async function signUp(username, password) {
+  // Self-registration with two keys: the class password (master key, handed
+  // out by the teacher) and the student's own password. The pool is open, but
+  // the PreSignUp trigger (admin/presignup/) only lets the account through
+  // when classKey is the class password, then auto-confirms it. So nobody
+  // without the master key can create anything, and each student ends up
+  // with a personal password. Resolves { status: 'ok' } once logged in.
+  async function signUp(username, password, classKey) {
     await cognito(IDP_HOST, 'AWSCognitoIdentityProviderService.SignUp', {
       ClientId: CLIENT_ID,
       Username: username,
       Password: password,
-      ClientMetadata: { classKey: password }
+      ClientMetadata: { classKey: classKey }
     });
     return login(username, password);
   }
