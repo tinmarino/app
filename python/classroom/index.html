@@ -138,10 +138,16 @@
     <!-- Shown only when Cognito answers NEW_PASSWORD_REQUIRED, i.e. the account
          still carries the shared class password as a temporary one. -->
     <label id="login-new-row" class="hidden">Choose your own password<input id="login-new" type="password" autocomplete="new-password"></label>
+    <!-- Register mode: the class password is what lets you create an account. -->
+    <label id="login-key-row" class="hidden">Class password (from your teacher)<input id="login-key" type="password" autocomplete="off"></label>
     <div class="modal-buttons">
       <button id="login-ok" type="button">Login</button>
       <button id="login-cancel" type="button">Cancel</button>
     </div>
+    <p class="modal-switch">
+      <span id="login-switch-register">No account yet? <a href="#">Register</a></span>
+      <span id="login-switch-login" class="hidden">Already registered? <a href="#">Login</a></span>
+    </p>
     <p id="login-error" class="error"></p>
   </div>
 </div>

@@ -343,6 +343,9 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   justify-content: flex-end;
 }
 .error { color: var(--gb-bright_red); font-size: 0.85rem; margin-top: 8px; }
+.modal-switch { margin-top: 12px; font-size: 0.85rem; color: var(--gb-light2); }
+.modal-switch a { color: var(--gb-bright_blue); }
+.modal-switch .hidden { display: none; }
 
 /* Local-first status line: the app is fully usable without any login */
 #sync-status {
@@ -707,7 +710,7 @@ button#btn-stop.urgent { animation: stop-pulse 0.9s ease-in-out infinite; }
 }
 
 /* The "choose your own password" row appears only on a first login */
-#login-new-row.hidden { display: none; }
+#login-new-row.hidden, #login-key-row.hidden { display: none; }
 
 
 /* ==========================================================================

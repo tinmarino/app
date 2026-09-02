@@ -117,6 +117,13 @@
     if (type === 'PasswordResetRequiredException') return 'Your password must be reset. Ask your teacher.';
     if (type === 'TooManyRequestsException') return 'Too many attempts. Wait a moment and try again.';
     if (type === 'InvalidPasswordException') return 'That password is too weak: ' + message;
+    if (type === 'UsernameExistsException') return 'That user name is taken. Log in instead, or pick another.';
+    if (type === 'UserLambdaValidationException' && /class password/i.test(message)) {
+      return 'Wrong class password.';
+    }
+    if (type === 'InvalidParameterException' && /username/i.test(message)) {
+      return 'User name: letters, digits, dots, dashes or underscores only.';
+    }
     return message;
   }
 
@@ -173,6 +180,20 @@
     await finish(username, auth.AuthenticationResult);
     rememberLogin(username, password);
     return { status: 'ok' };
+  }
+
+  // Self-registration. The pool is open, and the PreSignUp trigger
+  // (admin/presignup/) only lets the account through when classKey is the
+  // shared class password; it then auto-confirms it, so the new student can
+  // log in straight away. Resolves { status: 'ok' } once logged in.
+  async function signUp(username, password, classKey) {
+    await cognito(IDP_HOST, 'AWSCognitoIdentityProviderService.SignUp', {
+      ClientId: CLIENT_ID,
+      Username: username,
+      Password: password,
+      ClientMetadata: { classKey: classKey }
+    });
+    return login(username, password);
   }
 
   // Answer the NEW_PASSWORD_REQUIRED challenge
@@ -394,7 +415,7 @@
   async function loadSubmission(key) { return getJson(key); }
 
   global.ClassroomSync = {
-    login, setNewPassword, logout, dropSession, isLoggedIn, username,
+    login, signUp, setNewPassword, logout, dropSession, isLoggedIn, username,
     rememberLogin, rememberedLogin, forgetRememberedLogin,
     identity: () => identityId,
     restore: loadSession,

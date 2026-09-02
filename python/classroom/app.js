@@ -74,6 +74,10 @@
   const $loginError = document.getElementById('login-error');
   const $loginNew = document.getElementById('login-new');
   const $loginNewRow = document.getElementById('login-new-row');
+  const $loginKey = document.getElementById('login-key');
+  const $loginKeyRow = document.getElementById('login-key-row');
+  const $loginSwitchRegister = document.getElementById('login-switch-register');
+  const $loginSwitchLogin = document.getElementById('login-switch-login');
   const $btnHistory = document.getElementById('btn-history');
   const $btnRestore = document.getElementById('btn-restore');
 
@@ -1346,10 +1350,14 @@
   }
 
   // === Push progress =====================================================
-  async function pushProgress() {
+  // `snapshotOnly` uploads the full state (done list, every saved script) but
+  // no per-exercise .py file: it is what a login or a registration uses to
+  // put this browser's work in the bucket without pretending the open
+  // exercise was just submitted.
+  async function pushProgress(snapshotOnly) {
     if (!isLoggedIn()) { showLogin(); return; }
 
-    const curId = currentExercise ? currentExercise.id : null;
+    const curId = currentExercise && !snapshotOnly ? currentExercise.id : null;
     // "accepted" once the tests have passed (getSolved holds the passing code),
     // otherwise it is just a "submitted" work-in-progress.
     const passed = curId ? !!getSolved(curId) : false;
@@ -1373,7 +1381,8 @@
     if ($btnPush) $btnPush.disabled = true;
     try {
       const record = await withAutoLogin(() => Sync.submit(progress));
-      setSyncNote('Submitted at ' + record.savedAt.slice(0, 16).replace('T', ' ') + '.');
+      setSyncNote((snapshotOnly ? 'Saved to the server at ' : 'Submitted at ')
+                  + record.savedAt.slice(0, 16).replace('T', ' ') + '.');
     } catch (err) {
       setSyncNote('Submit failed: ' + err.message);
       console.error(err);
@@ -1412,6 +1421,7 @@
   // password is still the shared class one, where Cognito demands a new
   // password before it hands out any token.
   let pendingChallenge = null;
+  let registerMode = false;
 
   function reflectLoginState() {
     const loggedIn = isLoggedIn();
@@ -1481,6 +1491,7 @@
     $loginModal.classList.remove('hidden');
     $loginError.textContent = '';
     showNewPasswordField(false);
+    setRegisterMode(false);
     const remembered = Sync.rememberedLogin ? Sync.rememberedLogin() : null;
     $loginUser.value = currentUser() || (remembered ? remembered.username : '') || '';
     $loginPass.value = remembered ? remembered.password : '';
@@ -1495,6 +1506,32 @@
   function showNewPasswordField(on) {
     $loginNewRow.classList.toggle('hidden', !on);
     if (on) { $loginNew.value = ''; $loginNew.focus(); }
+  }
+  // Register mode: same user/password fields, plus the class password that
+  // the PreSignUp trigger checks. The account is then the student's own.
+  function setRegisterMode(on) {
+    registerMode = on;
+    $loginKeyRow.classList.toggle('hidden', !on);
+    $loginSwitchRegister.classList.toggle('hidden', on);
+    $loginSwitchLogin.classList.toggle('hidden', !on);
+    $loginOk.textContent = on ? 'Register' : 'Login';
+    $loginPass.autocomplete = on ? 'new-password' : 'current-password';
+    $loginError.textContent = '';
+    if (on) $loginKey.value = '';
+  }
+
+  async function handleRegister(user, pass) {
+    const key = $loginKey.value;
+    if (!user || !pass || !key) { $loginError.textContent = 'All three fields required.'; return; }
+    if (pass.length < 8) { $loginError.textContent = 'Your password: at least 8 characters.'; return; }
+    $loginError.textContent = 'Creating your account...';
+    try {
+      await Sync.signUp(user, pass, key);
+      hideLogin();
+      await afterLogin();
+    } catch (err) {
+      $loginError.textContent = err.message;
+    }
   }
 
   async function handleLogin() {
@@ -1516,6 +1553,7 @@
       return;
     }
 
+    if (registerMode) { await handleRegister(user, pass); return; }
     if (!user || !pass) { $loginError.textContent = 'Both fields required.'; return; }
     $loginError.textContent = 'Signing in...';
     try {
@@ -1533,17 +1571,44 @@
     }
   }
 
-  // An explicit login defaults to a force restore: you have just told the app
-  // who you are, so it brings your last submitted version down in full rather
-  // than only filling gaps. (The quiet auto-login at boot stays gap-only, so a
-  // reload never clobbers edits you have not submitted.)
+  // What a login does with the work already in this browser.
+  //
+  // Same student as last time (or nobody was ever logged in here, which is
+  // the late-login case: weeks of local work, account made today): merge.
+  // The done list becomes the union, remote scripts only fill local gaps,
+  // and whatever this browser has that the server lacks is uploaded --
+  // nothing is removed on either side. A B4 solved offline lands in the
+  // bucket; a C2 solved on the phone shows up here.
+  //
+  // A *different* student than the last one logged in on this browser: the
+  // clean switch (force restore), so one student's code is never carried
+  // over to, or re-submitted under, another's account.
+  const LAST_USER_KEY = 'py_classroom_last_user_' + SET_KEY;
+
+  function hasLocalProgress() {
+    return getDoneList().length > 0 || exercises.some(ex =>
+      localStorage.getItem(CODE_PREFIX + ex.id) || getSolved(ex.id));
+  }
+
   async function afterLogin() {
     reflectLoginState();
     refreshStatus();
+    const user = currentUser();
+    const lastUser = localStorage.getItem(LAST_USER_KEY);
+    const switching = !!lastUser && lastUser !== user;
+    localStorage.setItem(LAST_USER_KEY, user);
     try {
-      await pullProgress(true, true);
+      const res = await pullProgress(true, switching);
+      if (!switching && hasLocalProgress()) {
+        await pushProgress(true);
+        setSyncNote(res.found
+          ? 'Merged with the server: ' + getDoneList().length
+            + ' completed. Your local work was uploaded too.'
+          : 'Your work from this browser is now saved on the server: '
+            + getDoneList().length + ' completed.');
+      }
     } catch (err) {
-      setSyncNote('Could not read your submission: ' + err.message);
+      setSyncNote('Could not sync your submission: ' + err.message);
       console.error(err);
     }
   }
@@ -1621,6 +1686,9 @@
   $loginCancel.addEventListener('click', hideLogin);
   $loginPass.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
   $loginNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  $loginKey.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  $loginSwitchRegister.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(true); $loginKey.focus(); });
+  $loginSwitchLogin.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(false); });
 
   $editor.addEventListener('keydown', (e) => {
     // Ctrl/Cmd+Enter runs
