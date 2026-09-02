@@ -126,6 +126,17 @@
         + '<span class="tb-msg">' + esc(m[3]) + '</span>';
     }
 
+    // Check's explanation of a failed test: "Got:       'hello'   (str)"
+    if ((m = line.match(/^(Test|Call|Got|Expected|Left|Right|Reason|Note|Hint):(\s+)([\s\S]*)$/))) {
+      const label = m[1];
+      const cls = label === 'Hint' || label === 'Reason' ? 'tb-msg' : '';
+      const value = cls ? '<span class="' + cls + '">' + esc(m[3]) + '</span>' : highlightPy(m[3]);
+      return '<span class="tb-kw">' + label + ':</span>' + m[2] + value;
+    }
+    if ((m = line.match(/^(Test \d+ of \d+ failed.*|Hint: .*)$/))) {
+      return '<span class="tb-exc">' + esc(line) + '</span>';
+    }
+
     // Indented source echo -> real Python highlighting
     if (/^\s+\S/.test(line)) {
       const indent = line.match(/^\s*/)[0];
