@@ -41,6 +41,7 @@
 
   // === DOM refs ===
   const $list = document.getElementById('exercise-list');
+  const $btnExpandAll = document.getElementById('btn-expand-all');
   const $title = document.getElementById('exercise-title');
   const $editor = document.getElementById('editor');
   const $highlightPre = document.getElementById('editor-highlight');
@@ -414,7 +415,9 @@
 
   // Picking an exercise on a phone should get out of the way, and hand the
   // screen back to the code.
-  $list.addEventListener('click', () => { if (isNarrow()) setSidebarShown(false); });
+  $list.addEventListener('click', (e) => {
+    if (isNarrow() && !e.target.closest('.series-head')) setSidebarShown(false);
+  });
   // Leaving the narrow layout must not strand the overlay-open class on the body
   // (it would collapse the docked sidebar's width); re-apply the dock defaults.
   window.addEventListener('resize', () => {
@@ -588,27 +591,121 @@
     selectExerciseFromUrl();
   }
 
+  // Human names for the track letters; an unknown letter shows just the letter.
+  const SERIES_NAMES = { A: 'Warm-up', B: 'Loops', C: 'Collections', D: 'Stacks', E: 'Beyond' };
+  const COLLAPSED_KEY = 'py_series_collapsed';
+
+  function seriesLetter(ex) { return String(ex.id || '').charAt(0).toUpperCase() || '?'; }
+  function allLetters() { return [...new Set(exercises.map(seriesLetter))]; }
+  function loadCollapsed() {
+    try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function saveCollapsed(set) {
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); }
+    catch { /* storage unavailable */ }
+  }
+
+  // The sidebar: one collapsible box per track, each holding its exercises.
   function renderExerciseList() {
     $list.innerHTML = '';
     const done = getDoneList();
+    const collapsed = loadCollapsed();
+
+    const groups = [];
+    const byLetter = new Map();
     exercises.forEach((ex, idx) => {
-      const li = document.createElement('li');
-      li.textContent = ex.title;
-      // Operable without a mouse: focusable, activated by Enter/Space, and
-      // announced as a button rather than a bare list item.
-      li.tabIndex = 0;
-      li.setAttribute('role', 'button');
-      if (done.includes(ex.id)) {
-        li.classList.add('done');
-        li.setAttribute('aria-label', ex.title + ' (completed)');
-      }
-      li.addEventListener('click', () => selectExercise(idx));
-      li.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectExercise(idx); }
-      });
-      $list.appendChild(li);
+      const letter = seriesLetter(ex);
+      let g = byLetter.get(letter);
+      if (!g) { g = { letter, items: [] }; byLetter.set(letter, g); groups.push(g); }
+      g.items.push({ ex, idx });
     });
+
+    groups.forEach(g => {
+      const box = document.createElement('li');
+      box.className = 'series';
+      box.dataset.series = g.letter;
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'series-head';
+      head.innerHTML =
+        '<span class="caret" aria-hidden="true">\u25B8</span>'
+        + '<span class="series-name"></span><span class="series-count"></span>';
+      const name = SERIES_NAMES[g.letter] ? g.letter + ' \u00b7 ' + SERIES_NAMES[g.letter] : g.letter;
+      const nDone = g.items.filter(it => done.includes(it.ex.id)).length;
+      head.querySelector('.series-name').textContent = name;
+      head.querySelector('.series-count').textContent = nDone + '/' + g.items.length;
+      head.addEventListener('click', () => toggleSeries(g.letter));
+      box.appendChild(head);
+
+      const items = document.createElement('ul');
+      items.className = 'series-items';
+      g.items.forEach(({ ex, idx }) => {
+        const li = document.createElement('li');
+        li.dataset.idx = String(idx);
+        li.textContent = ex.title;
+        li.tabIndex = 0;
+        li.setAttribute('role', 'button');
+        if (done.includes(ex.id)) {
+          li.classList.add('done');
+          li.setAttribute('aria-label', ex.title + ' (completed)');
+        }
+        if (currentExercise && currentExercise.id === ex.id) li.classList.add('active');
+        li.addEventListener('click', () => selectExercise(idx));
+        li.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectExercise(idx); }
+        });
+        items.appendChild(li);
+      });
+      box.appendChild(items);
+      $list.appendChild(box);
+    });
+
+    applyCollapsed(collapsed);
   }
+
+  // Show/hide one track and remember the choice.
+  function toggleSeries(letter) {
+    const collapsed = loadCollapsed();
+    if (collapsed.has(letter)) collapsed.delete(letter); else collapsed.add(letter);
+    saveCollapsed(collapsed);
+    applyCollapsed(collapsed);
+  }
+
+  function applyCollapsed(collapsed) {
+    $list.querySelectorAll('.series').forEach(box => {
+      const on = collapsed.has(box.dataset.series);
+      box.classList.toggle('collapsed', on);
+      const head = box.querySelector('.series-head');
+      if (head) head.setAttribute('aria-expanded', String(!on));
+    });
+    if ($btnExpandAll) {
+      const anyOpen = allLetters().some(l => !collapsed.has(l));
+      $btnExpandAll.classList.toggle('all-collapsed', !anyOpen);
+      const label = anyOpen ? 'Collapse all series' : 'Expand all series';
+      $btnExpandAll.title = label;
+      $btnExpandAll.setAttribute('aria-label', label);
+    }
+  }
+
+  // The header arrow: collapse everything if anything is open, else open all.
+  function toggleExpandAll() {
+    const letters = allLetters();
+    const anyOpen = loadCollapsed().size < letters.length;
+    const next = new Set(anyOpen ? letters : []);
+    saveCollapsed(next);
+    applyCollapsed(next);
+  }
+
+  // Selecting an exercise (e.g. from a shared URL) opens its track.
+  function revealSeries(ex) {
+    if (!ex) return;
+    const collapsed = loadCollapsed();
+    if (collapsed.delete(seriesLetter(ex))) { saveCollapsed(collapsed); applyCollapsed(collapsed); }
+  }
+
+  if ($btnExpandAll) $btnExpandAll.addEventListener('click', toggleExpandAll);
 
   // The ?exercice= URL param: the exercise title slugified, e.g.
   // "A4 - Fibonacci" -> "a4-fibonacci".
@@ -646,7 +743,9 @@
       } catch { /* not our parent */ }
     }
     // Highlight active
-    $list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === idx));
+    revealSeries(exercise);
+    $list.querySelectorAll('li[data-idx]').forEach(li =>
+      li.classList.toggle('active', Number(li.dataset.idx) === idx));
     $title.textContent = currentExercise.title;
 
     // Load exercise markdown/content

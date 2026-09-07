@@ -14,13 +14,19 @@
 <link rel="stylesheet" href="/css/lib_color_dark_gruvbox.css">
 <link rel="stylesheet" href="/css/lib_color_use_custom_var.css">
 <link rel="stylesheet" href="/css/prism_dark_dark.css">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
 <!-- Left sidebar: exercise list -->
 <aside id="sidebar" aria-label="Exercises">
-  <h2 id="sidebar-title">Python Exercises</h2>
+  <div id="sidebar-head">
+    <h2 id="sidebar-title">Python Exercises</h2>
+    <button id="btn-expand-all" type="button"
+            title="Collapse all series" aria-label="Collapse all series">
+      <span class="expand-all-caret" aria-hidden="true">&#9662;</span>
+    </button>
+  </div>
   <ul id="exercise-list"></ul>
   <p id="sync-status">Progress is saved in this browser.</p>
   <div id="sidebar-footer">
@@ -166,7 +172,7 @@
 <script src="classroom-sync.js?v=3"></script>
 <script src="markdown.js"></script>
 <script src="worker-manager.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 
 </body>
 </html>

@@ -44,35 +44,108 @@ body {
   padding: 16px 14px 10px;
   font-size: 1.1rem;
   color: var(--gb-bright_purple);
+}
+
+#sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   border-bottom: 1px solid var(--gb-dark2);
 }
+#btn-expand-all {
+  margin: 0 12px;
+  padding: 3px 9px;
+  border: 1px solid var(--gb-dark2);
+  border-radius: 6px;
+  background: var(--gb-dark1);
+  color: var(--gb-light0);
+  cursor: pointer;
+  line-height: 1;
+}
+#btn-expand-all:hover { background: var(--gb-dark2); }
+#btn-expand-all .expand-all-caret {
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+#btn-expand-all.all-collapsed .expand-all-caret { transform: rotate(-90deg); }
 
 #exercise-list {
   list-style: none;
   flex: 1;
   overflow-y: auto;
-  padding: 6px 0;
+  padding: 8px;
   font-size: var(--list-font);
 }
 
-#exercise-list li {
-  padding: 8px 14px;
+/* Each track is a rounded box, clearly separated from its neighbours. */
+#exercise-list .series {
+  list-style: none;
+  margin: 0 0 10px;
+  border: 1px solid var(--gb-dark2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--gb-dark0);
+}
+#exercise-list .series:last-child { margin-bottom: 0; }
+
+/* Clickable series header: caret + name + a done/total pill. */
+#exercise-list .series-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--gb-bright_yellow);
+  background: var(--gb-dark1);
+}
+#exercise-list .series-head:hover { background: var(--gb-dark2); }
+#exercise-list .series-head .caret {
+  display: inline-block;
+  font-size: 0.85em;
+  color: var(--gb-gray);
+  transform: rotate(90deg);          /* open: caret points down */
+  transition: transform 0.2s ease;
+}
+#exercise-list .series.collapsed .series-head .caret { transform: rotate(0deg); }
+#exercise-list .series-name { flex: 1; font-weight: 600; }
+#exercise-list .series-count {
+  font-size: 0.8em;
+  color: var(--gb-gray);
+  background: var(--gb-dark0_hard);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+/* Smooth collapse of the items under a header. */
+#exercise-list .series-items {
+  list-style: none;
+  max-height: 2000px;
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+}
+#exercise-list .series.collapsed .series-items { max-height: 0; }
+
+#exercise-list .series-items li {
+  padding: 8px 12px 8px 14px;
   cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 0.15s, border-color 0.15s;
 }
-
-#exercise-list li:hover {
-  background: var(--gb-dark1);
+/* Smoothly striped rows so consecutive exercises read apart. */
+#exercise-list .series-items li:nth-child(even) {
+  background: rgba(255, 255, 255, 0.035);
 }
-
-#exercise-list li.active {
+#exercise-list .series-items li:hover { background: var(--gb-dark1); }
+#exercise-list .series-items li.active {
   background: var(--gb-dark1);
   border-left-color: var(--gb-bright_aqua);
   color: var(--gb-bright_aqua);
 }
-
-#exercise-list li.done::before {
+#exercise-list .series-items li.done::before {
   content: '\2713 ';
   color: var(--gb-bright_green);
 }
