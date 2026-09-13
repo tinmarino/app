@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="/css/lib_color_dark_gruvbox.css">
 <link rel="stylesheet" href="/css/lib_color_use_custom_var.css">
 <link rel="stylesheet" href="/css/prism_dark_dark.css">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -112,16 +112,22 @@
     <div id="tests-pane" class="tab-content">
       <pre id="tests-output" aria-live="polite"></pre>
     </div>
+    <!-- One pane, one focus: the scrollback and the prompt share the same
+         scrolling flow, the way a real terminal (and shell.html) do. The
+         prompt line is the last child of the scroller, so it sits at the
+         bottom of the history and scrolls with it. -->
     <div id="console-pane" class="tab-content">
-      <div id="console-history"></div>
-      <div id="console-input-line">
-        <span class="prompt" id="console-prompt">&gt;&gt;&gt;&nbsp;</span>
-        <!-- textarea, not input: multi-line blocks (def/for/if...) are editable.
-             Enter opens a new line with Python-aware indentation;
-             Shift+Enter (or Ctrl+Enter) runs the block. -->
-        <textarea id="console-input" rows="1" spellcheck="false" autocorrect="off" autocomplete="off"
-                  autocapitalize="off" wrap="off"
-                  placeholder="Python — Enter to run, Shift+Enter for a new line, !help for keys"></textarea>
+      <div id="console-history">
+        <div id="console-output"></div>
+        <div id="console-input-line">
+          <span class="prompt" id="console-prompt">&gt;&gt;&gt;&nbsp;</span>
+          <!-- textarea, not input: multi-line blocks (def/for/if...) are editable.
+               Enter opens a new line with Python-aware indentation;
+               Shift+Enter (or Ctrl+Enter) runs the block. -->
+          <textarea id="console-input" rows="1" spellcheck="false" autocorrect="off" autocomplete="off"
+                    autocapitalize="off" wrap="off"
+                    placeholder="Python — Enter to run, Shift+Enter for a new line, !help for keys"></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -171,8 +177,8 @@
 <script src="pyutil.js"></script>
 <script src="classroom-sync.js?v=3"></script>
 <script src="markdown.js"></script>
-<script src="worker-manager.js"></script>
-<script src="app.js?v=6"></script>
+<script src="worker-manager.js?v=2"></script>
+<script src="app.js?v=10"></script>
 
 </body>
 </html>

@@ -340,36 +340,50 @@ button#btn-check:hover { background: var(--gb-neutral_blue); }
   flex: 1;
 }
 
-/* Console tab */
-#console-pane { gap: 0; }
+/* Console tab: one pane, one focus. The scrollback and the prompt share the
+   same scrolling box (#console-history), the way a real terminal does; the
+   prompt line is the last child, so it sits at the bottom and scrolls along. */
+#console-pane {
+  gap: 0;
+  padding: 0;
+  position: relative;   /* anchors the absolutely-placed completion popup */
+}
 
 #console-history {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--gb-light2);
-  padding-bottom: 4px;
+  padding: 8px 12px;
+  cursor: text;         /* clicking anywhere means "type here" */
 }
+#console-output > span { display: block; }
 
+/* The prompt: the last line of the same flow, styled to disappear into it so
+   the caret looks like a terminal caret sitting after the ">>>". */
 #console-input-line {
   display: flex;
-  align-items: center;
-  border-top: 1px solid var(--gb-dark2);
-  padding-top: 4px;
+  align-items: flex-start;   /* prompt stays on the first line */
 }
 #console-input-line .prompt {
   color: var(--gb-bright_green);
   margin-right: 4px;
   user-select: none;
+  flex: 0 0 auto;
+  /* Match the input's 16px so the ">>>" and the caret sit on one baseline */
+  font-size: 16px;
+  line-height: 1.5;
 }
 #console-input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   color: var(--gb-light0);
+  caret-color: var(--gb-bright_aqua);
   font-family: inherit;
-  font-size: inherit;
   outline: none;
 }
 
@@ -502,19 +516,18 @@ body.output-collapsed #output-area {
 body.resizing { cursor: inherit; user-select: none; }
 body.resizing * { user-select: none !important; }
 
-/* --- Multiline console input --- */
-#console-input-line {
-  align-items: flex-start;    /* prompt stays on the first line */
-}
+/* --- Multiline console input: grows with its content, wraps on a phone so the
+   pane never scrolls sideways. --- */
 #console-input {
   resize: none;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: pre;
+  overflow: hidden;           /* it grows instead of scrolling on its own */
+  white-space: pre-wrap;
+  word-break: break-word;
   line-height: 1.5;
   tab-size: 4;
   min-height: 1.5em;
-  max-height: 40vh;
+  /* 16px keeps iOS Safari from zooming the page when the field takes focus */
+  font-size: 16px;
   padding: 0;
 }
 #console-prompt { line-height: 1.5; }
@@ -578,6 +591,67 @@ body.resizing * { user-select: none !important; }
 /* Console: help text, completions and result reprs */
 #console-history .help        { color: var(--gb-neutral_aqua); }
 #console-history .completions { color: var(--gb-neutral_yellow); }
+
+/* Shared autocompletion popup: a floating list anchored at the caret, used by
+   both the editor and the inline console so the two feel identical. */
+.completion-pop {
+  position: absolute;
+  z-index: 6;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 180px;
+  min-width: 140px;
+  max-width: calc(100% - 8px);   /* never overflow the pane on a phone */
+  overflow-y: auto;
+  background: var(--gb-dark1);
+  border: 1px solid var(--gb-dark3);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  font-family: 'Consolas', 'Fira Code', monospace;
+  font-size: var(--code-font);
+  line-height: 1.4;
+}
+.completion-pop li {
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: var(--gb-light1);
+  cursor: pointer;
+  white-space: pre;
+}
+.completion-pop li.active {
+  background: var(--gb-faded_blue);
+  color: #fff;
+}
+.completion-pop li:hover { background: var(--gb-dark2); }
+
+/* --- Lint gutter: Vim-style sign column at the editor's left edge --- */
+/* An overlay layer; each sign is absolutely positioned within it. The layer
+   itself is inert, only the signs take pointer events (hover title / tap). */
+#editor-gutter {
+  position: absolute;
+  inset: 8px;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 3;
+}
+.lint-sign {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+/* Bigger tap target on touch screens without moving the visible dot */
+.lint-sign::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+.lint-error { background: var(--gb-bright_red, #fb4934); }
+.lint-warning { background: var(--gb-bright_yellow, #fabd2f); }
 
 /* --- Description panel: rendered "## Description" over the editor --- */
 #description-panel {

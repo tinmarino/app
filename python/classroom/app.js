@@ -14,7 +14,7 @@
   // NOTE: the 3.14 build dropped classic-worker support -> use the ESM entry point
   const PYODIDE_URL = new URL('vendor/pyodide/314.0.6/pyodide/pyodide.mjs', location.href).href;
   // Worker file — must be a real URL (not a Blob) so relative imports resolve
-  const WORKER_URL  = new URL('pyodide-worker.js', location.href).href;
+  const WORKER_URL  = new URL('pyodide-worker.js?v=2', location.href).href;
   // Exercise content lives in the Page repo (custom class content), not here.
   // Override with ?ex=<base-url> (e.g. ?ex=http://localhost:8002/class/python-exercices)
   // Same origin as this app (www.tinmarino.com serves both / and /app/)
@@ -46,11 +46,22 @@
   const $editor = document.getElementById('editor');
   const $highlightPre = document.getElementById('editor-highlight');
   const $highlight = $highlightPre.querySelector('code');
+  // Lint gutter overlay + state, declared up here so the early repaint() ->
+  // syncScroll() -> renderGutter() path (an exercise auto-loaded from ?ex=)
+  // never hits a temporal-dead-zone on these.
+  const $gutter = document.createElement('div');
+  $gutter.id = 'editor-gutter';
+  $gutter.setAttribute('aria-hidden', 'true');
+  document.getElementById('editor-container').appendChild($gutter);
+  let lintDiags = [];
+  let lintTimer = null;
   const $output = document.getElementById('output');
   const $testsOutput = document.getElementById('tests-output');
   const $consoleHistory = document.getElementById('console-history');
+  const $consoleOutput = document.getElementById('console-output');
   const $consoleInput = document.getElementById('console-input');
   const $consolePrompt = document.getElementById('console-prompt');
+  const $consoleInputLine = document.getElementById('console-input-line');
   const $btnRun = document.getElementById('btn-run');
   const $btnCheck = document.getElementById('btn-check');
   const $btnReset = document.getElementById('btn-reset');
@@ -106,6 +117,7 @@
   function syncScroll() {
     $highlightPre.scrollTop  = $editor.scrollTop;
     $highlightPre.scrollLeft = $editor.scrollLeft;
+    if (typeof renderGutter === 'function') renderGutter();
   }
   $editor.addEventListener('scroll', syncScroll);
   if (!window.Prism) {
@@ -956,7 +968,7 @@
     } else {
       span.textContent = text + '\n';
     }
-    $consoleHistory.appendChild(span);
+    $consoleOutput.appendChild(span);
     $consoleHistory.scrollTop = $consoleHistory.scrollHeight;
     return span;
   }
@@ -968,6 +980,8 @@
   function autoGrow() {
     $consoleInput.style.height = 'auto';
     $consoleInput.style.height = $consoleInput.scrollHeight + 'px';
+    // The prompt shares the scroll flow, so keep it in view as it grows.
+    $consoleHistory.scrollTop = $consoleHistory.scrollHeight;
   }
 
   function setConsoleInput(v) {
@@ -1001,6 +1015,8 @@
     '',
     'Magics',
     '  !help  %help  ?    this message',
+    '  !help <Type>       list the public methods of a type (List, Str, Dict, ...)',
+    '  !help <Type>.<m>   help for one method, e.g. !help List.append',
     '  %clear  !clear     clear the screen (also Ctrl+L)',
     '  %who               list the names you have defined',
     '  %time <expr>       time one evaluation of <expr>',
@@ -1014,6 +1030,45 @@
     '  Top-level await works. `_` holds the last result.'
   ].join('\n');
 
+  // Python source for `!help <Type>` / `!help <Type>.<method>`: resolve friendly
+  // names (List -> list, Str -> str, ...) or any in-scope name, then either list a
+  // type's public methods with one-line summaries or show help() for one method.
+  function helpMagicPy(arg) {
+    return [
+      '_ARG = ' + JSON.stringify(arg),
+      '_alias = {"List": list, "Str": str, "Dict": dict, "Set": set,',
+      '          "Tuple": tuple, "Int": int, "Float": float, "Bool": bool,',
+      '          "Bytes": bytes, "Frozenset": frozenset, "Complex": complex}',
+      'def _tin_help(_a):',
+      '    _t = None',
+      '    if _a in _alias:',
+      '        _t = _alias[_a]',
+      '    else:',
+      '        _parts = _a.split(".")',
+      '        try:',
+      '            if len(_parts) > 1 and _parts[0] in _alias:',
+      '                _t = _alias[_parts[0]]',
+      '                for _p in _parts[1:]:',
+      '                    _t = getattr(_t, _p)',
+      '            else:',
+      '                _t = eval(_a, globals())  # pylint: disable=eval-used',
+      '        except Exception:  # pylint: disable=broad-exception-caught',
+      '            _t = None',
+      '    if _t is None:',
+      '        print(f"!help: no such type or name: {_a}")',
+      '    elif isinstance(_t, type):',
+      '        print(f"Public methods of {_t.__name__}:")',
+      '        for _n in sorted(_m for _m in dir(_t) if not _m.startswith("_")):',
+      '            _doc = (getattr(getattr(_t, _n), "__doc__", "") or "")',
+      '            _sum = next((_l for _l in _doc.splitlines() if _l.strip()), "")',
+      '            print(f"  {_n:<18} {_sum}")',
+      '    else:',
+      '        help(_t)',
+      '_tin_help(_ARG)',
+      ''
+    ].join('\n');
+  }
+
   // Returns Python source to execute, '' when handled locally, or null to pass through
   function applyMagic(src) {
     const line = src.trim();
@@ -1024,8 +1079,12 @@
       appendConsole(HELP_TEXT, 'help');
       return '';
     }
+    let hm;
+    if ((hm = line.match(/^[%!]help\s+(.+)$/))) {
+      return helpMagicPy(hm[1].trim());
+    }
     if (line === '%clear' || line === '!clear') {
-      $consoleHistory.innerHTML = '';
+      $consoleOutput.innerHTML = '';
       return '';
     }
     if (line === '%reset') {
@@ -1132,13 +1191,32 @@
     return pre;
   }
 
-  async function doComplete() {
+  // The same popup component the editor uses. Anchored above the caret because
+  // the console prompt lives at the bottom of the pane; on a phone the list must
+  // stay inside the viewport, which createCompletionPopup clamps for us.
+  const consolePop = createCompletionPopup(document.getElementById('console-pane'),
+    { above: true, scroller: $consoleHistory });
+
+  // Insert a completion `mtext` (a full replacement from code-point `start`).
+  function applyConsoleCompletion(head, mtext, at) {
+    $consoleInput.value = head + mtext + $consoleInput.value.slice(at);
+    const pos = (head + mtext).length;
+    $consoleInput.selectionStart = $consoleInput.selectionEnd = pos;
+    autoGrow();
+    $consoleInput.focus();
+  }
+
+  // Unlike the editor (static jedi over the buffer), the console completes
+  // against the LIVE namespace via rlcompleter, so `a = ""` then `a.` on a new
+  // prompt offers the real str methods bound to the real object.
+  async function doComplete(auto) {
     const at = $consoleInput.selectionStart;
     const before = $consoleInput.value.slice(0, at);
     const word = (before.match(/[\w.]*$/) || [''])[0];
 
-    // Nothing to complete: behave like Tab in an editor
+    // Nothing to complete: a manual Tab behaves like Tab in an editor (indent).
     if (!word) {
+      if (auto) { consolePop.close(); return; }
       $consoleInput.value = before + INDENT + $consoleInput.value.slice(at);
       $consoleInput.selectionStart = $consoleInput.selectionEnd = at + INDENT_N;
       autoGrow();
@@ -1151,22 +1229,33 @@
     } catch {
       return;   // completion is a convenience: never surface its failures
     }
-    if (!matches || !matches.length) return;
+    // Rapid typing fires overlapping async queries that can resolve out of
+    // order; ignore any whose input no longer matches the caret, so the popup
+    // only ever reflects the latest keystroke.
+    if ($consoleInput.selectionStart !== at
+        || $consoleInput.value.slice(0, at) !== before) return;
+    if (!matches || !matches.length) { consolePop.close(); return; }
 
     // `start` comes from CPython's rlcompleter and counts code points, while
     // JS slices count UTF-16 units. They differ once an astral char is present.
     const head = Array.from(before).slice(0, start).join('');
-    const insert = matches.length === 1 ? matches[0] : commonPrefix(matches);
-    if (insert && head + insert !== before) {
-      $consoleInput.value = head + insert + $consoleInput.value.slice(at);
-      const pos = (head + insert).length;
-      $consoleInput.selectionStart = $consoleInput.selectionEnd = pos;
-      autoGrow();
+
+    // A single hit on a manual Tab: just take it, no popup.
+    if (matches.length === 1 && !auto) {
+      applyConsoleCompletion(head, matches[0], at);
+      return;
     }
-    if (matches.length > 1) {
-      // Print the candidates the way a shell does
-      appendConsole(matches.join('    '), 'completions');
-    }
+
+    // Same popup, same look as the editor. Label shows the short name (the tail
+    // after the last dot); accepting inserts the full rlcompleter replacement.
+    const items = matches.map(mtext => {
+      const dot = mtext.replace(/[([]$/, '').lastIndexOf('.');
+      return {
+        label: dot >= 0 ? mtext.slice(dot + 1) : mtext,
+        apply: () => applyConsoleCompletion(head, mtext, at)
+      };
+    });
+    consolePop.open(items, $consoleInput, at);
   }
 
   // --- History -----------------------------------------------------------
@@ -1187,12 +1276,24 @@
   }
 
   // --- Key bindings ------------------------------------------------------
-  $consoleInput.addEventListener('input', () => {
+  $consoleInput.addEventListener('input', (e) => {
     setPrompt($consoleInput.value.includes('\n'));
     autoGrow();
+    // Open right after a `.` (IDE feel) and keep completing through the whole
+    // attribute chain (`a.up`, `a.upp`), even when typed faster than the async
+    // query resolves. Otherwise, only re-filter an already-open popup.
+    if (e && e.inputType === 'insertText'
+        && (e.data === '.' || /\.\w*$/.test($consoleInput.value.slice(0, $consoleInput.selectionStart)))) {
+      doComplete(true);
+    } else if (consolePop.isOpen()) {
+      doComplete(true);
+    }
   });
+  $consoleInput.addEventListener('blur', () => setTimeout(() => consolePop.close(), 100));
 
   $consoleInput.addEventListener('keydown', async (e) => {
+    // The popup owns navigation and accept keys while it is open.
+    if (consolePop.handleKey(e)) return;
     const val = $consoleInput.value;
 
     if (e.key === 'Enter') {
@@ -1213,7 +1314,7 @@
       return;
     }
 
-    if (e.key === 'Tab') { e.preventDefault(); await doComplete(); return; }
+    if (e.key === 'Tab') { e.preventDefault(); await doComplete(false); return; }
 
     if (e.key === 'Backspace' && smartBackspace($consoleInput, e, autoGrow)) return;
 
@@ -1228,15 +1329,17 @@
       return;
     }
 
-    if (e.ctrlKey && e.key === 'l') { e.preventDefault(); $consoleHistory.innerHTML = ''; return; }
+    if (e.ctrlKey && e.key === 'l') { e.preventDefault(); $consoleOutput.innerHTML = ''; return; }
     if (e.ctrlKey && e.key === 'u') { e.preventDefault(); setConsoleInput(''); return; }
   });
 
-  // Clicking anywhere in the pane focuses the input, like a terminal
+  // One pane, one focus: clicking anywhere in the console types into the inline
+  // prompt, the way a real terminal behaves -- except while selecting to copy.
   document.getElementById('console-pane').addEventListener('mousedown', e => {
-    if (e.target === $consoleHistory || e.target.id === 'console-pane') {
-      setTimeout(() => $consoleInput.focus(), 0);
-    }
+    if (e.target === $consoleInput) return;
+    const sel = window.getSelection();
+    if (sel && String(sel).length) return;
+    setTimeout(() => $consoleInput.focus(), 0);
   });
 
 
@@ -1808,7 +1911,208 @@
   $loginSwitchRegister.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(true); $loginKey.focus(); });
   $loginSwitchLogin.addEventListener('click', (e) => { e.preventDefault(); setRegisterMode(false); });
 
-  $editor.addEventListener('keydown', (e) => {
+  // === Editor autocompletion ============================================
+  // Real, code-aware completion via jedi (the library IPython and VS Code use),
+  // running in the Worker over the WHOLE editor buffer. jedi does static type
+  // inference, so `a = ""; a.` offers str methods and `lst = []; lst.` offers
+  // list methods even though nothing was ever executed and no name is bound. No
+  // hardcoded method tables: the names come from actual Python introspection.
+  // The popup UI below is unchanged; only the source of the names is jedi.
+
+  // Ask jedi to complete at the caret. Feeds the entire buffer plus the caret's
+  // 1-based line and 0-based column, and returns { word, names } where `word` is
+  // the partial identifier before the caret (for the popup's prefix handling).
+  async function editorMatches() {
+    const caret = $editor.selectionStart;
+    const full = $editor.value;
+    const before = full.slice(0, caret);
+    const word = (before.match(/[\w]*$/) || [''])[0];
+    const upto = before.split('\n');
+    const line = upto.length;                 // jedi lines are 1-based
+    const col = upto[upto.length - 1].length; // columns are 0-based
+    const names = [];
+    try {
+      const { matches } = await workerMgr.completeSource(full, line, col);
+      if (matches) matches.forEach(m => names.push(m.name));
+    } catch { /* completion is a convenience: never surface its failures */ }
+    return { word, names };
+  }
+
+  // --- Completion popup ---------------------------------------------------
+  // Mirror-div caret geometry: the textarea offers none, so a hidden copy of it
+  // holds the same text and a marker span whose offset is the caret position.
+  function caretCoords(ta, pos) {
+    const div = document.createElement('div');
+    const style = getComputedStyle(ta);
+    ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom',
+      'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth',
+      'borderLeftWidth', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+      'letterSpacing', 'lineHeight', 'textAlign', 'tabSize']
+      .forEach(p => { div.style[p] = style[p]; });
+    div.style.position = 'absolute';
+    div.style.visibility = 'hidden';
+    div.style.whiteSpace = 'pre-wrap';
+    div.style.wordBreak = 'break-word';
+    div.style.overflow = 'hidden';
+    div.style.left = '-9999px';
+    div.style.top = '0';
+    div.textContent = ta.value.slice(0, pos);
+    const span = document.createElement('span');
+    span.textContent = ta.value.slice(pos) || '.';
+    div.appendChild(span);
+    document.body.appendChild(div);
+    const coords = {
+      top: span.offsetTop,
+      left: span.offsetLeft,
+      height: parseInt(style.lineHeight, 10) || 16
+    };
+    document.body.removeChild(div);
+    return coords;
+  }
+
+  // Shared completion popup: one component, one look, driven by both the editor
+  // and the inline console. Items are {label, apply}; the caller decides how to
+  // insert the accepted text. `above:true` anchors it over the caret line, which
+  // is what the console needs since its prompt sits at the bottom of the pane.
+  function createCompletionPopup(container, cfg) {
+    const opts = cfg || {};
+    const ul = document.createElement('ul');
+    ul.className = 'completion-pop';
+    ul.hidden = true;
+    container.appendChild(ul);
+    let items = [];
+    let index = 0;
+
+    function isOpen() { return !ul.hidden; }
+    function close() { ul.hidden = true; items = []; index = 0; }
+    function renderActive() {
+      [...ul.children].forEach((li, i) => li.classList.toggle('active', i === index));
+      const active = ul.children[index];
+      if (active) active.scrollIntoView({ block: 'nearest' });
+    }
+    function accept() {
+      const it = items[index];
+      if (!it) { close(); return; }
+      close();
+      it.apply();
+    }
+    function move(delta) {
+      if (!items.length) return;
+      index = (index + delta + items.length) % items.length;
+      renderActive();
+    }
+    function open(list, ta, caret) {
+      items = list;
+      index = 0;
+      ul.innerHTML = '';
+      list.forEach((it, i) => {
+        const li = document.createElement('li');
+        li.textContent = it.label;
+        li.addEventListener('mousedown', ev => { ev.preventDefault(); index = i; accept(); });
+        if (i === 0) li.classList.add('active');
+        ul.appendChild(li);
+      });
+      const c = caretCoords(ta, caret);
+      ul.hidden = false;                       // show first so we can measure it
+      // When the textarea sits inside a separate scrolling pane (the console),
+      // fold that pane's scroll into the caret position too, not just the
+      // textarea's own scroll.
+      const sTop = opts.scroller ? opts.scroller.scrollTop : 0;
+      const sLeft = opts.scroller ? opts.scroller.scrollLeft : 0;
+      let left = ta.offsetLeft + c.left - ta.scrollLeft - sLeft;
+      let top = ta.offsetTop + c.top - ta.scrollTop - sTop + c.height;
+      if (opts.above) top = ta.offsetTop + c.top - ta.scrollTop - sTop - ul.offsetHeight;
+      // Keep it inside the container at phone width: no horizontal overflow.
+      const maxLeft = container.clientWidth - ul.offsetWidth - 4;
+      if (left > maxLeft) left = Math.max(2, maxLeft);
+      if (left < 2) left = 2;
+      if (top < 0) top = ta.offsetTop + c.top - ta.scrollTop - sTop + c.height;
+      ul.style.left = left + 'px';
+      ul.style.top = top + 'px';
+      // Final clamp in real (viewport) coordinates: the console drawer is short,
+      // so keep the list on screen, nudging it up and capping its height rather
+      // than letting it spill past the viewport on a phone.
+      const rect = ul.getBoundingClientRect();
+      const margin = 4;
+      if (rect.bottom > window.innerHeight - margin) {
+        top -= (rect.bottom - (window.innerHeight - margin));
+        ul.style.top = top + 'px';
+      }
+      const rect2 = ul.getBoundingClientRect();
+      if (rect2.top < margin) {
+        ul.style.top = (top + (margin - rect2.top)) + 'px';
+        ul.style.maxHeight = (window.innerHeight - 2 * margin) + 'px';
+      }
+    }
+    // Returns true when the keystroke belonged to the popup and was consumed.
+    function handleKey(e) {
+      if (!isOpen()) return false;
+      if (e.key === 'ArrowDown') { e.preventDefault(); move(1); return true; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); return true; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); accept(); return true; }
+      if (e.key === 'Escape') { e.preventDefault(); close(); return true; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+          || e.key === 'Home' || e.key === 'End') close();
+      return false;
+    }
+    return { open, close, isOpen, handleKey };
+  }
+
+  const editorPop = createCompletionPopup(document.getElementById('editor-container'));
+
+  function acceptCompletion(name) {
+    const caret = $editor.selectionStart;
+    const before = $editor.value.slice(0, caret);
+    const word = (before.match(/[\w]*$/) || [''])[0];
+    const head = before.slice(0, before.length - word.length);
+    $editor.value = head + name + $editor.value.slice(caret);
+    const pos = (head + name).length;
+    $editor.selectionStart = $editor.selectionEnd = pos;
+    editorPop.close();
+    saveAndRepaint();
+    $editor.focus();
+  }
+
+  function insertIndent() {
+    const start = $editor.selectionStart;
+    $editor.value = $editor.value.slice(0, start) + INDENT + $editor.value.slice($editor.selectionEnd);
+    $editor.selectionStart = $editor.selectionEnd = start + INDENT_N;
+    saveAndRepaint();
+  }
+
+  // Manual (Tab) or automatic (typing a `.`, or filtering an open popup).
+  async function editorComplete(auto) {
+    const caret = $editor.selectionStart;
+    if ($editor.selectionEnd !== caret) { if (!auto) insertIndent(); editorPop.close(); return; }
+    const before = $editor.value.slice(0, caret);
+    const word = (before.match(/[\w]*$/) || [''])[0];
+    const afterDot = before.slice(0, before.length - word.length).endsWith('.');
+    // No completable token before the caret: Tab keeps its indent behaviour
+    if (!word && !afterDot) { if (!auto) insertIndent(); editorPop.close(); return; }
+    const { names } = await editorMatches();
+    if (!names.length) { editorPop.close(); return; }
+    if (names.length === 1 && !auto) { acceptCompletion(names[0]); return; }
+    // Multiple matches: on a manual Tab, fill the common prefix first
+    if (!auto) {
+      const pre = commonPrefix(names);
+      if (pre && pre.length > word.length) {
+        const head = before.slice(0, before.length - word.length);
+        $editor.value = head + pre + $editor.value.slice(caret);
+        const pos = (head + pre).length;
+        $editor.selectionStart = $editor.selectionEnd = pos;
+        saveAndRepaint();
+      }
+    }
+    editorPop.open(names.map(name => ({ label: name, apply: () => acceptCompletion(name) })),
+      $editor, $editor.selectionStart);
+  }
+
+  $editor.addEventListener('blur', () => setTimeout(() => editorPop.close(), 100));
+
+  $editor.addEventListener('keydown', async (e) => {
+    // Popup navigation takes precedence while it is open
+    if (editorPop.handleKey(e)) return;
+
     // Ctrl/Cmd+Enter runs
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runCode(); return; }
 
@@ -1819,13 +2123,10 @@
       return;
     }
 
-    // Tab inserts one level
+    // Tab completes the token before the caret, or inserts one indent level
     if (e.key === 'Tab') {
       e.preventDefault();
-      const start = $editor.selectionStart;
-      $editor.value = $editor.value.slice(0, start) + INDENT + $editor.value.slice($editor.selectionEnd);
-      $editor.selectionStart = $editor.selectionEnd = start + INDENT_N;
-      saveAndRepaint();
+      await editorComplete(false);
       return;
     }
 
@@ -1839,12 +2140,80 @@
   }
 
   // Auto-save on change
-  $editor.addEventListener('input', () => {
+  $editor.addEventListener('input', (e) => {
     repaint();
     if (currentExercise) {
       localStorage.setItem(CODE_PREFIX + currentExercise.id, $editor.value);
     }
+    // Open the popup right after a `.` (IDE feel), and keep it filtered while it
+    // is already open. Never on every keystroke otherwise.
+    if (e && e.inputType === 'insertText' && e.data === '.') editorComplete(true);
+    else if (editorPop.isOpen()) editorComplete(true);
+    scheduleLint();
   });
+
+  // === Lint gutter (Vim signs) ==========================================
+  // A sign column at the left edge of the editor: a red dot for an error, an
+  // amber dot for a warning, on the offending line. Diagnostics come from the
+  // Worker (pyflakes: undefined names, unused imports, redefinitions; plus a
+  // compile() syntax error), run debounced ~400ms after typing stops and only
+  // when the Worker is idle, so Run/Check/completion are never delayed.
+  // ($gutter, lintDiags, lintTimer are declared in the DOM-refs block above.)
+  function scheduleLint() {
+    if (lintTimer) clearTimeout(lintTimer);
+    lintTimer = setTimeout(runLint, 400);
+  }
+
+  async function runLint() {
+    lintTimer = null;
+    if (!workerMgr || !workerMgr.ready) { scheduleLint(); return; }
+    // One worker, single-flight: never fight Run/Check for it. If busy, try again
+    // shortly instead of surfacing a "busy" error for a background lint.
+    if (workerMgr.isBusy()) { lintTimer = setTimeout(runLint, 250); return; }
+    const codeAtRequest = $editor.value;
+    try {
+      const { diags } = await workerMgr.lint(codeAtRequest);
+      if (codeAtRequest !== $editor.value) return; // stale: a newer edit will relint
+      lintDiags = diags || [];
+      renderGutter();
+    } catch { /* busy or a load hiccup: the next edit reschedules */ }
+  }
+
+  // Place one sign per offending line, aligned to that line's top using the same
+  // mirror-div caret geometry the popup uses, and clipped to the visible area so
+  // signs scroll with the code. Called on lint, scroll, repaint and resize.
+  function renderGutter() {
+    $gutter.innerHTML = '';
+    if (!lintDiags.length) return;
+    const value = $editor.value;
+    const lines = value.split('\n');
+    const starts = [];
+    let idx = 0;
+    for (let i = 0; i < lines.length; i++) { starts.push(idx); idx += lines[i].length + 1; }
+    const byLine = new Map();
+    lintDiags.forEach(d => {
+      const cur = byLine.get(d.line);
+      if (!cur) byLine.set(d.line, { level: d.level, msgs: [d.msg] });
+      else { cur.msgs.push(d.msg); if (d.level === 'error') cur.level = 'error'; }
+    });
+    const viewTop = $editor.scrollTop;
+    const viewH = $editor.clientHeight;
+    byLine.forEach((info, lineNo) => {
+      const pos = starts[lineNo - 1] != null ? starts[lineNo - 1] : 0;
+      const c = caretCoords($editor, pos);
+      const y = c.top - viewTop;
+      if (y < 0 || y > viewH) return;   // off-screen: don't draw
+      const sign = document.createElement('span');
+      sign.className = 'lint-sign lint-' + info.level;
+      sign.style.top = ($editor.offsetTop + y + 2) + 'px';
+      sign.style.left = ($editor.offsetLeft + 2) + 'px';
+      sign.title = info.msgs.join('\n');
+      sign.addEventListener('click', () => alert(info.msgs.join('\n')));
+      $gutter.appendChild(sign);
+    });
+  }
+
+  window.addEventListener('resize', renderGutter);
 
   // A login is optional: without one everything still runs, checks, marks
   // exercises green, and downloads. Only Submit and History need it.

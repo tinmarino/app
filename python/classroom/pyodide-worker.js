@@ -14,6 +14,30 @@ let replPush = null;      // async (src) -> JSON string
 let replComplete = null;  // (src)       -> JSON string
 let replReset = null;
 let checkRun = null;      // (code) -> failure text or None
+let jediComplete = null;  // (src, line, col) -> JSON string
+let lintSource = null;    // (src)            -> JSON string
+let idePromise = null;    // memoised lazy-load of jedi/parso/pyflakes
+let idePyodideUrl = null; // absolute pyodide.mjs URL, for resolving wheel URLs
+
+/* Load the IDE packages once, off the first-paint path. jedi + parso do static,
+ * code-aware completion (a variable's type inferred from its assignment); pyflakes
+ * gives Vim-style undefined-name / unused-import diagnostics. The wheels are
+ * vendored next to pyodide.mjs. jedi/parso are in pyodide-lock.json (loaded by
+ * name); their vendored copies are the canonical PyPI wheels, whose sha256 differs
+ * from the lock's repackaged ones, so integrity checking is turned off. pyflakes
+ * is not in the lock, so it is installed from its wheel URL directly (no micropip).
+ */
+async function ensureIde(pyodideUrl) {
+  if (idePromise) return idePromise;
+  idePromise = (async () => {
+    const pyflakesUrl = new URL('pyflakes-3.2.0-py2.py3-none-any.whl', pyodideUrl).href;
+    await pyodide.loadPackage(['parso', 'jedi', pyflakesUrl], { checkIntegrity: false });
+    pyodide.runPython(IDE_SETUP);
+    jediComplete = pyodide.globals.get('_jedi_complete');
+    lintSource   = pyodide.globals.get('_lint_source');
+  })();
+  return idePromise;
+}
 
 /* ── helpers ──────────────────────────────────────────────── */
 // A runaway `for i in range(10**6): print(i)` produces megabytes; posting all of
@@ -454,6 +478,100 @@ def _repl_banner():
         sys.version.split()[0], sys.platform)
 `;
 
+/* Python side of the IDE (jedi completion + pyflakes/compile lint). Run once
+ * ensureIde() has installed the packages. */
+const IDE_SETUP = `
+"""Editor completion and linting driver for the classroom Worker.
+
+Exposes two JSON-returning callables used by pyodide-worker.js:
+'_jedi_complete' (static, code-aware completion via jedi) and '_lint_source'
+(compile() syntax errors plus pyflakes diagnostics). Imports of the optional
+packages are lazy so this module loads before jedi/pyflakes are installed.
+"""
+
+import json
+
+
+def _jedi_complete(src, line, col):
+    """ Return JSON {"matches": [{name, type, complete}]} for the caret.
+
+    jedi infers types statically from the buffer, so 'a = ""; a.' proposes
+    str methods with no execution. line is 1-based, col is 0-based.
+    """
+    try:
+        import jedi  # pylint: disable=import-outside-toplevel,import-error
+        script = jedi.Script(src)
+        seen = set()
+        out = []
+        for comp in script.complete(line, col):
+            name = comp.name
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append({
+                "name": name,
+                "type": comp.type or "",
+                "complete": comp.complete or "",
+            })
+        return json.dumps({"matches": out})
+    except BaseException as exc:  # pylint: disable=broad-except
+        return json.dumps({"matches": [], "error": str(exc)})
+
+
+class _Reporter:
+    """ pyflakes reporter (its native CamelCase API) collecting plain dicts. """
+
+    def __init__(self):
+        self.items = []
+
+    def unexpectedError(self, _filename, _msg):  # pylint: disable=invalid-name
+        """ Ignore internal pyflakes failures; a lint must never surface. """
+
+    def syntaxError(  # pylint: disable=invalid-name,too-many-arguments
+            self, _filename, msg, lineno, offset, _text):
+        """ Record a pyflakes-reported syntax error. """
+        self.items.append({
+            "line": lineno or 1, "col": offset or 0,
+            "level": "error", "msg": msg,
+        })
+
+    def flake(self, message):
+        """ Record one warning (undefined name, unused import, redefinition). """
+        try:
+            text = message.message % message.message_args
+        except BaseException:  # pylint: disable=broad-except
+            text = str(message)
+        self.items.append({
+            "line": getattr(message, "lineno", 1) or 1,
+            "col": getattr(message, "col", 0) or 0,
+            "level": "warning", "msg": text,
+        })
+
+
+def _lint_source(src):
+    """ Return JSON {"diags": [{line, col, level, msg}]} for the buffer.
+
+    compile() reports the syntax error the parser sees; when the code parses,
+    pyflakes adds undefined names, unused imports and redefinitions.
+    """
+    try:
+        compile(src, "<editor>", "exec")
+    except SyntaxError as err:
+        return json.dumps({"diags": [{
+            "line": err.lineno or 1, "col": err.offset or 0,
+            "level": "error", "msg": err.msg or "syntax error",
+        }]})
+    diags = []
+    try:
+        import pyflakes.api  # pylint: disable=import-outside-toplevel,import-error
+        reporter = _Reporter()
+        pyflakes.api.check(src, "<editor>", reporter)
+        diags = reporter.items
+    except BaseException:  # pylint: disable=broad-except
+        diags = []
+    return json.dumps({"diags": diags})
+`;
+
 /* ── message handler ──────────────────────────────────────── */
 self.onmessage = async function (e) {
   const msg = e.data;
@@ -461,6 +579,7 @@ self.onmessage = async function (e) {
   /* ── init ── */
   if (msg.type === 'init') {
     try {
+      idePyodideUrl = msg.pyodideUrl;
       const { loadPyodide } = await import(msg.pyodideUrl);
       pyodide = await loadPyodide();
       pyodide.runPython(REPL_SETUP);
@@ -470,6 +589,9 @@ self.onmessage = async function (e) {
       checkRun     = pyodide.globals.get('_check_run');
       const banner = pyodide.globals.get('_repl_banner')();
       postMessage({ type: 'ready', banner });
+      // Warm the IDE packages in the background so first completion/lint is instant.
+      // Failure is silent: completion and lint are conveniences, never blockers.
+      ensureIde(idePyodideUrl).catch(() => {});
     } catch (err) {
       postMessage({ type: 'error', error: String(err) });
     }
@@ -522,6 +644,32 @@ self.onmessage = async function (e) {
       res = { matches: [], start: 0 };
     }
     postMessage({ type: 'complete-result', ...res });
+    return;
+  }
+
+  /* ── editor: jedi static completion over the whole buffer ── */
+  if (msg.type === 'complete-source') {
+    let res;
+    try {
+      await ensureIde(idePyodideUrl);
+      res = JSON.parse(jediComplete(msg.code, msg.line, msg.col));
+    } catch (err) {
+      res = { matches: [], error: String(err) };
+    }
+    postMessage({ type: 'complete-source-result', ...res });
+    return;
+  }
+
+  /* ── editor: pyflakes + compile() lint ── */
+  if (msg.type === 'lint') {
+    let res;
+    try {
+      await ensureIde(idePyodideUrl);
+      res = JSON.parse(lintSource(msg.code));
+    } catch (err) {
+      res = { diags: [], error: String(err) };
+    }
+    postMessage({ type: 'lint-result', ...res });
     return;
   }
 

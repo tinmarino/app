@@ -86,8 +86,15 @@ class PyodideWorkerManager {
     'run': 'result',
     'console': 'console-result',
     'complete': 'complete-result',
+    'complete-source': 'complete-source-result',
+    'lint': 'lint-result',
     'reset-namespace': 'console-result'
   };
+
+  // True while a request is in flight. Background work (editor lint) checks this
+  // and skips its tick rather than getting rejected as "busy", so a Run or Check
+  // is never delayed by an opportunistic lint.
+  isBusy() { return !!this._pending; }
 
   _enqueue(msgType, extra) {
     if (this.failed) return Promise.reject(this.failed);
@@ -125,6 +132,22 @@ class PyodideWorkerManager {
   async complete(code) {
     await this.readyPromise;
     return this._enqueue('complete', { code });
+  }
+
+  // jedi static completion over the WHOLE editor buffer -> { matches: [{name,
+  // type, complete}] }. Unlike complete() (which needs a live bound name), this
+  // infers types from the code itself, so `a = ""; a.` offers str methods even
+  // though nothing was ever executed. line is 1-based, col 0-based.
+  async completeSource(code, line, col) {
+    await this.readyPromise;
+    return this._enqueue('complete-source', { code, line, col });
+  }
+
+  // pyflakes + compile() diagnostics for the editor buffer.
+  // -> { diags: [{line, col, level, msg}] }
+  async lint(code) {
+    await this.readyPromise;
+    return this._enqueue('lint', { code });
   }
 
   // Wipe the shared namespace and rebuild the console

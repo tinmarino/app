@@ -19,7 +19,7 @@
   } = window.PyUtil;
 
   const PYODIDE_URL = new URL('vendor/pyodide/314.0.6/pyodide/pyodide.mjs', location.href).href;
-  const WORKER_URL  = new URL('pyodide-worker.js', location.href).href;
+  const WORKER_URL  = new URL('pyodide-worker.js?v=2', location.href).href;
 
   const HISTORY_KEY = 'ipyodide_history';
   const HISTORY_MAX = 300;
@@ -113,6 +113,8 @@
     '',
     'Magics',
     '  !help  %help  ?    this message',
+    '  !help <Type>       list the public methods of a type (List, Str, Dict, ...)',
+    '  !help <Type>.<m>   help for one method, e.g. !help List.append',
     '  %clear  !clear     clear the screen',
     '  %who               list the names you have defined',
     '  %time <expr>       time one evaluation',
@@ -129,10 +131,51 @@
     'works, and `_` holds the last result.'
   ].join('\n');
 
+  // Python source for `!help <Type>` / `!help <Type>.<method>`: resolve friendly
+  // names (List -> list, Str -> str, ...) or any in-scope name, then either list a
+  // type's public methods with one-line summaries or show help() for one method.
+  function helpMagicPy(arg) {
+    return [
+      '_ARG = ' + JSON.stringify(arg),
+      '_alias = {"List": list, "Str": str, "Dict": dict, "Set": set,',
+      '          "Tuple": tuple, "Int": int, "Float": float, "Bool": bool,',
+      '          "Bytes": bytes, "Frozenset": frozenset, "Complex": complex}',
+      'def _tin_help(_a):',
+      '    _t = None',
+      '    if _a in _alias:',
+      '        _t = _alias[_a]',
+      '    else:',
+      '        _parts = _a.split(".")',
+      '        try:',
+      '            if len(_parts) > 1 and _parts[0] in _alias:',
+      '                _t = _alias[_parts[0]]',
+      '                for _p in _parts[1:]:',
+      '                    _t = getattr(_t, _p)',
+      '            else:',
+      '                _t = eval(_a, globals())  # pylint: disable=eval-used',
+      '        except Exception:  # pylint: disable=broad-exception-caught',
+      '            _t = None',
+      '    if _t is None:',
+      '        print(f"!help: no such type or name: {_a}")',
+      '    elif isinstance(_t, type):',
+      '        print(f"Public methods of {_t.__name__}:")',
+      '        for _n in sorted(_m for _m in dir(_t) if not _m.startswith("_")):',
+      '            _doc = (getattr(getattr(_t, _n), "__doc__", "") or "")',
+      '            _sum = next((_l for _l in _doc.splitlines() if _l.strip()), "")',
+      '            print(f"  {_n:<18} {_sum}")',
+      '    else:',
+      '        help(_t)',
+      '_tin_help(_ARG)',
+      ''
+    ].join('\n');
+  }
+
   // Returns Python source to run, '' when handled here, or null to pass through
   function applyMagic(src) {
     const line = src.trim();
     if (line === '?' || line === '!help' || line === '%help') { append(HELP_TEXT, 'help'); return ''; }
+    let hm;
+    if ((hm = line.match(/^[%!]help\s+(.+)$/))) { return helpMagicPy(hm[1].trim()); }
     if (line === '%clear' || line === '!clear') { $screen.innerHTML = ''; return ''; }
     if (line === '%stop' || line === '%restart') { restart(); return ''; }
     if (line === '%exercises' || line === '!exercises') {
