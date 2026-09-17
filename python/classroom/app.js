@@ -604,7 +604,8 @@
   }
 
   // Human names for the track letters; an unknown letter shows just the letter.
-  const SERIES_NAMES = { A: 'Warm-up', B: 'Loops', C: 'Collections', D: 'Stacks', E: 'Beyond' };
+  const SERIES_NAMES = { A: 'Warm-up', B: 'Loops', C: 'Collections', D: 'Stacks', E: 'Beyond',
+                         F: 'Class Picks', G: 'More Loops', H: 'Pairs and Grids' };
   const COLLAPSED_KEY = 'py_series_collapsed';
 
   function seriesLetter(ex) { return String(ex.id || '').charAt(0).toUpperCase() || '?'; }

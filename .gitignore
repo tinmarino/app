@@ -1,5 +1,9 @@
 # Python
 *whl
+# ...but the vendored Pyodide wheels are runtime assets: jedi/parso drive editor
+# autocompletion and pyflakes the lint. Ignoring them shipped a production site
+# where completion silently did nothing while localhost worked.
+!python/classroom/vendor/**/*.whl
 
 # Tinmarino
 donotgit/
